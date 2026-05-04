@@ -31,6 +31,11 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+      - name: Bundle frontend with backend
+        run: |
+          rm -rf InnerVoice_Jelly/dist
+          cp -R dist InnerVoice_Jelly/dist
+
       - name: Validate backend dependencies
         run: |
           python -m venv antenv
@@ -75,4 +80,4 @@ jobs:
           app-name: 'luna-webapp'
           slot-name: 'Production'
           package: .
-          startup-command: 'gunicorn -w 1 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:${PORT:-8000} --chdir InnerVoice_Jelly backend:app'
+          startup-command: 'sh InnerVoice_Jelly/startup.sh'
