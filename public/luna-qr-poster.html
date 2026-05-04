@@ -3,21 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>LUNA QR Poster</title>
+    <title>Luna QR</title>
     <style>
       :root {
-        --bg-main: #040613;
-        --bg-card: rgba(11, 15, 32, 0.97);
-        --bg-card-elevated: rgba(14, 20, 44, 0.95);
-        --border-soft: rgba(135, 152, 191, 0.46);
-        --border-subtle: rgba(145, 163, 215, 0.18);
-        --accent: #7c8dff;
-        --accent-soft: #a6b3ff;
-        --accent-cyan: #79dfff;
-        --accent-mix: linear-gradient(135deg, #79dfff, #9ea7ff);
-        --text-main: #f5f4ff;
-        --text-muted: #b3bddb;
-        --shadow-soft: 0 24px 70px rgba(0, 0, 0, 0.55);
+        --bg: #05030b;
+        --panel: rgba(20, 17, 30, 0.94);
+        --panel-soft: rgba(31, 26, 45, 0.82);
+        --border: rgba(202, 188, 232, 0.16);
+        --text: #eee8f1;
+        --muted: #9d99ad;
+        --accent: #b79be5;
+        --accent-light: #eadfff;
       }
 
       * {
@@ -29,220 +25,129 @@
         min-height: 100vh;
         display: grid;
         place-items: center;
-        padding: 24px;
+        padding: 28px;
         background:
-          radial-gradient(circle at top, rgba(58, 72, 148, 0.28), transparent 28%),
-          radial-gradient(circle at bottom left, rgba(77, 165, 255, 0.1), transparent 24%),
-          linear-gradient(180deg, #0a0d1f 0%, #040613 50%, #030510 100%);
-        color: var(--text-main);
-        font-family: "Segoe UI Variable Text", "SF Pro Text", "Inter", system-ui, sans-serif;
+          radial-gradient(circle at 50% -10%, rgba(128, 98, 180, 0.18), transparent 38%),
+          radial-gradient(circle at 15% 20%, rgba(73, 55, 106, 0.18), transparent 26%),
+          linear-gradient(180deg, #080611 0%, #05030b 62%, #020107 100%);
+        color: var(--text);
+        font-family: Inter, "Segoe UI", system-ui, sans-serif;
       }
 
-      .poster {
-        width: min(100%, 860px);
+      .card {
+        width: min(100%, 430px);
+        padding: 30px;
+        border: 1px solid var(--border);
+        border-radius: 26px;
         background:
-          linear-gradient(180deg, rgba(10, 14, 31, 0.95), rgba(7, 10, 24, 0.98)),
-          radial-gradient(circle at top, rgba(124, 141, 255, 0.08), transparent 32%);
-        border: 1px solid var(--border-soft);
-        border-radius: 28px;
-        box-shadow: var(--shadow-soft);
-        overflow: hidden;
+          linear-gradient(180deg, var(--panel), rgba(10, 8, 17, 0.96)),
+          radial-gradient(circle at top, rgba(183, 155, 229, 0.12), transparent 36%);
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.58);
+        text-align: center;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 13px;
+        margin-bottom: 20px;
+      }
+
+      .moon {
+        width: 44px;
+        height: 44px;
+        border: 2px solid rgba(238, 232, 241, 0.58);
+        border-radius: 50%;
         position: relative;
       }
 
-      .poster::before {
+      .moon::after {
         content: "";
         position: absolute;
-        inset: 0;
-        pointer-events: none;
-        background:
-          radial-gradient(circle at 18% 18%, rgba(121, 223, 255, 0.09), transparent 22%),
-          radial-gradient(circle at 82% 22%, rgba(158, 167, 255, 0.1), transparent 24%),
-          radial-gradient(circle at 70% 78%, rgba(121, 223, 255, 0.05), transparent 26%);
-      }
-
-      .hero {
-        padding: 36px 36px 24px;
-        background:
-          radial-gradient(circle at top left, rgba(127, 156, 255, 0.16), transparent 42%),
-          linear-gradient(180deg, rgba(12, 16, 36, 0.96), rgba(7, 11, 25, 0.94));
-        position: relative;
-      }
-
-      .hero::after {
-        content: "";
-        position: absolute;
-        inset: 0;
-        pointer-events: none;
-        background:
-          radial-gradient(circle at 50% 18%, rgba(255, 255, 255, 0.04), transparent 18%),
-          radial-gradient(circle at 20% 72%, rgba(124, 141, 255, 0.1), transparent 16%),
-          radial-gradient(circle at 82% 68%, rgba(119, 224, 255, 0.08), transparent 14%);
-      }
-
-      .eyebrow {
-        margin: 0 0 10px;
-        color: rgba(134, 219, 255, 0.84);
-        font: 600 14px/1.2 "Segoe UI Variable Text", "SF Pro Text", "Inter", system-ui, sans-serif;
-        letter-spacing: 0.18em;
-        text-transform: uppercase;
+        top: -5px;
+        right: -10px;
+        width: 36px;
+        height: 50px;
+        border-right: 2px solid rgba(183, 155, 229, 0.5);
+        border-radius: 50%;
       }
 
       h1 {
         margin: 0;
-        font-size: clamp(42px, 7vw, 78px);
-        line-height: 0.96;
-        letter-spacing: -0.04em;
-        color: var(--text-main);
-        font-family: "Iowan Old Style", Georgia, "Times New Roman", serif;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 56px;
+        line-height: 0.95;
+        font-weight: 700;
+        color: var(--text);
       }
 
-      .sub {
-        margin: 16px 0 0;
-        max-width: 580px;
-        color: rgba(214, 222, 245, 0.72);
-        font: 500 18px/1.6 "Segoe UI Variable Text", "SF Pro Text", "Inter", system-ui, sans-serif;
+      .tagline {
+        margin: 0 0 24px;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.55;
       }
 
-      .content {
-        display: grid;
-        grid-template-columns: minmax(220px, 320px) 1fr;
-        gap: 28px;
-        padding: 28px 36px 36px;
+      .qr-box {
+        padding: 16px;
+        border: 1px solid rgba(183, 155, 229, 0.28);
+        border-radius: 22px;
+        background: var(--panel-soft);
       }
 
-      .qr-wrap {
-        display: grid;
-        place-items: center;
-        padding: 22px;
-        border-radius: 24px;
-        border: 1px solid rgba(126, 220, 255, 0.14);
-        background:
-          linear-gradient(180deg, rgba(10, 14, 31, 0.95), rgba(7, 10, 24, 0.98)),
-          radial-gradient(circle at top, rgba(124, 141, 255, 0.08), transparent 32%);
-        box-shadow: inset 0 0 0 1px rgba(145, 163, 215, 0.04);
-      }
-
-      .qr-wrap img {
-        width: 100%;
-        max-width: 260px;
-        height: auto;
+      .qr-box img {
         display: block;
-        border-radius: 18px;
-        background: #f5f4ff;
-        box-shadow: 0 20px 38px rgba(49, 72, 154, 0.38);
-      }
-
-      .info {
-        display: grid;
-        gap: 18px;
-        align-content: center;
-      }
-
-      .pill {
-        display: inline-flex;
-        width: fit-content;
-        padding: 9px 14px;
-        border-radius: 999px;
-        background: rgba(121, 223, 255, 0.12);
-        border: 1px solid rgba(121, 223, 255, 0.24);
-        color: rgba(174, 235, 255, 0.92);
-        font: 600 14px/1.2 "Segoe UI Variable Text", "SF Pro Text", "Inter", system-ui, sans-serif;
+        width: 100%;
+        height: auto;
+        border-radius: 16px;
+        background: #f8f3ff;
       }
 
       .url {
-        margin: 0;
-        word-break: break-word;
-        color: #eef3ff;
-        font: 600 17px/1.6 "Segoe UI Variable Text", "SF Pro Text", "Inter", system-ui, sans-serif;
+        margin: 20px 0 0;
+        color: var(--accent-light);
+        font-size: 13px;
+        line-height: 1.5;
+        overflow-wrap: anywhere;
       }
 
-      .hint {
-        margin: 0;
-        color: rgba(210, 220, 245, 0.7);
-        font: 500 16px/1.6 "Segoe UI Variable Text", "SF Pro Text", "Inter", system-ui, sans-serif;
-      }
-
-      .actions {
-        display: flex;
-        gap: 12px;
-        flex-wrap: wrap;
-        margin-top: 6px;
-      }
-
-      .actions a,
-      .actions button {
-        appearance: none;
-        border: 0;
-        cursor: pointer;
-        text-decoration: none;
+      .button {
+        display: inline-flex;
+        margin-top: 20px;
         padding: 12px 18px;
-        border-radius: 999px;
-        font: 600 15px/1.2 "Segoe UI Variable Text", "SF Pro Text", "Inter", system-ui, sans-serif;
-      }
-
-      .primary {
-        background: var(--accent-mix);
-        color: #07111f;
-        box-shadow: 0 16px 32px rgba(109, 180, 255, 0.18);
-      }
-
-      .secondary {
-        border: 1px solid rgba(145, 163, 215, 0.18);
-        background: rgba(13, 18, 39, 0.9);
-        color: #eef3ff;
-      }
-
-      @media (max-width: 720px) {
-        .content {
-          grid-template-columns: 1fr;
-          padding-top: 10px;
-        }
+        border-radius: 14px;
+        background: linear-gradient(135deg, #eadfff, #a98bd9);
+        color: #191323;
+        font-weight: 700;
+        text-decoration: none;
       }
 
       @media print {
         body {
           background: #fff;
-          padding: 0;
         }
 
-        .poster {
+        .card {
           box-shadow: none;
-          border: 0;
-          border-radius: 0;
-          width: 100%;
-          max-width: none;
-        }
-
-        .actions {
-          display: none;
         }
       }
     </style>
   </head>
   <body>
-    <main class="poster">
-      <section class="hero">
-        <p class="eyebrow">Scan To Open</p>
-        <h1>LUNA</h1>
-        <p class="sub">Open the live LUNA companion app instantly from your phone with this QR code.</p>
-      </section>
+    <main class="card">
+      <div class="brand">
+        <span class="moon" aria-hidden="true"></span>
+        <h1>Luna</h1>
+      </div>
 
-      <section class="content">
-        <div class="qr-wrap">
-          <img src="/luna-qr.png" alt="QR code for the live LUNA app" />
-        </div>
+      <p class="tagline">A calm space for thoughtful conversation, private journaling, and everyday reflection.</p>
 
-        <div class="info">
-          <span class="pill">Live Link</span>
-          <p class="url">https://luna-final-app-gnbua6g2hpeeg8h5.southeastasia-01.azurewebsites.net/</p>
-          <p class="hint">Works best as a quick share card, a judge-demo poster, or a printed sheet beside your project setup.</p>
-          <div class="actions">
-            <a class="primary" href="https://luna-final-app-gnbua6g2hpeeg8h5.southeastasia-01.azurewebsites.net/" target="_blank" rel="noreferrer">Open App</a>
-            <button class="secondary" type="button" onclick="window.print()">Print Poster</button>
-          </div>
-        </div>
-      </section>
+      <div class="qr-box">
+        <img src="luna-qr.png" alt="QR code for the Luna app" />
+      </div>
+
+      <p class="url">https://luna-final-app-gnbua6g2hpeeg8h5.southeastasia-01.azurewebsites.net/</p>
+      <a class="button" href="https://luna-final-app-gnbua6g2hpeeg8h5.southeastasia-01.azurewebsites.net/">Open Luna</a>
     </main>
   </body>
 </html>
