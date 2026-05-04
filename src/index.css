@@ -12,10 +12,10 @@ body,
 }
 
 body {
-  font-family: "Segoe UI Variable Text", "Inter", "Segoe UI", system-ui, -apple-system,
-    sans-serif;
-  background: #040613;
-  color: #f5f4ff;
+  font-family: "Instrument Sans", "Segoe UI Variable Text", "Inter", "Segoe UI", system-ui,
+    -apple-system, sans-serif;
+  background: #0c0d10;
+  color: #e8eaef;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 }

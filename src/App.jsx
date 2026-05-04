@@ -5,6 +5,28 @@ import DiaryTab from "./DiaryTab";
 import "./App.css";
 
 const PROFILE_STORAGE_KEY = "luna_profile";
+const ACCOUNTS_STORAGE_KEY = "luna_accounts";
+
+function normalizeAccountName(name) {
+  return String(name || "").trim();
+}
+
+function createAccountStorageSlug(name) {
+  return normalizeAccountName(name).toLowerCase().replace(/[^a-z0-9]+/g, "-") || "account";
+}
+
+function ensureAccountSpaces(account) {
+  const slug = createAccountStorageSlug(account?.name);
+  const diaryKey = `luna_diary_entries:${slug}`;
+  const chatKey = `luna_chat_history:${slug}`;
+
+  if (!window.localStorage.getItem(diaryKey)) {
+    window.localStorage.setItem(diaryKey, JSON.stringify([]));
+  }
+  if (!window.localStorage.getItem(chatKey)) {
+    window.localStorage.setItem(chatKey, JSON.stringify([]));
+  }
+}
 
 function readSavedProfile() {
   try {
@@ -18,8 +40,40 @@ function readSavedProfile() {
   }
 }
 
+function readSavedAccounts() {
+  try {
+    const raw = window.localStorage.getItem(ACCOUNTS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    const accounts = Array.isArray(parsed)
+      ? parsed
+        .filter((item) => item?.name && item?.password)
+        .map((item) => ({ name: String(item.name), password: String(item.password) }))
+      : [];
+
+    const legacyProfile = readSavedProfile();
+    if (
+      legacyProfile &&
+      !accounts.some((account) => account.name.toLowerCase() === legacyProfile.name.toLowerCase())
+    ) {
+      accounts.unshift(legacyProfile);
+      window.localStorage.setItem(ACCOUNTS_STORAGE_KEY, JSON.stringify(accounts));
+    }
+
+    accounts.forEach(ensureAccountSpaces);
+    return accounts;
+  } catch {
+    return [];
+  }
+}
+
 function saveProfile(profile) {
   window.localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
+  ensureAccountSpaces(profile);
+}
+
+function saveAccounts(accounts) {
+  window.localStorage.setItem(ACCOUNTS_STORAGE_KEY, JSON.stringify(accounts));
+  accounts.forEach(ensureAccountSpaces);
 }
 
 function clearSavedProfile() {
@@ -40,22 +94,9 @@ class ChatErrorBoundary extends Component {
     if (this.state.error) {
       return (
         <div className="app-root" style={{ padding: "2rem" }}>
-          <div
-            style={{
-              maxWidth: "760px",
-              margin: "0 auto",
-              borderRadius: "24px",
-              background: "rgba(10, 14, 32, 0.96)",
-              border: "1px solid rgba(255, 170, 170, 0.45)",
-              padding: "1.4rem 1.5rem",
-              color: "#ffe4e4",
-              boxShadow: "0 24px 70px rgba(0,0,0,0.65)",
-            }}
-          >
-            <div style={{ fontSize: "1rem", fontWeight: 700, marginBottom: "0.7rem" }}>
-              Luna hit a render glitch
-            </div>
-            <div style={{ fontSize: "0.95rem", lineHeight: 1.6 }}>
+          <div className="luna-error-panel">
+            <div className="luna-error-panel-title">Luna hit a render glitch</div>
+            <div className="luna-error-panel-body">
               {this.state.error?.message || "Unknown render error"}
             </div>
           </div>
@@ -69,20 +110,33 @@ class ChatErrorBoundary extends Component {
 
 export default function App() {
   const [profile, setProfile] = useState(() => readSavedProfile());
+  const [accounts, setAccounts] = useState(() => readSavedAccounts());
   const [isSignedIn, setIsSignedIn] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [authMode, setAuthMode] = useState(() => (readSavedProfile() ? "signin" : "signup"));
+  const [authMode, setAuthMode] = useState(() => (readSavedAccounts().length ? "signin" : "signup"));
   const [authName, setAuthName] = useState(() => readSavedProfile()?.name || "");
   const [authPassword, setAuthPassword] = useState("");
   const [authConfirmPassword, setAuthConfirmPassword] = useState("");
   const [authError, setAuthError] = useState("");
-  const authButtonLabel = isSignedIn ? "Account" : profile ? "Sign in" : "Sign up";
+  const accountChoices = accounts.length ? accounts : readSavedAccounts();
+  const [diaryAccountName, setDiaryAccountName] = useState(
+    () => readSavedProfile()?.name || readSavedAccounts()[0]?.name || "",
+  );
+  const authButtonLabel = isSignedIn ? "Account" : accountChoices.length ? "Choose account" : "Create account";
   const isChatView = activeTab === "chat" && isSignedIn;
+  const diaryAccount = accountChoices.find(
+    (account) => account.name.toLowerCase() === diaryAccountName.toLowerCase(),
+  ) || accountChoices[0] || null;
+  const diaryUserName = diaryAccount?.name || "Choose account";
+  const goHome = () => setActiveTab("overview");
 
   const handleUnlock = (nextProfile) => {
     if (nextProfile) {
+      saveProfile(nextProfile);
       setProfile(nextProfile);
+      setAccounts(readSavedAccounts());
+      setDiaryAccountName(nextProfile.name);
     }
     setIsSignedIn(true);
     setActiveTab("chat");
@@ -94,8 +148,10 @@ export default function App() {
 
   const openAuthModal = (preferredMode) => {
     const savedProfile = readSavedProfile();
-    setAuthMode(preferredMode || (savedProfile ? "signin" : "signup"));
-    setAuthName(savedProfile?.name || "");
+    const savedAccounts = readSavedAccounts();
+    setAccounts(savedAccounts);
+    setAuthMode(preferredMode || (savedAccounts.length ? "signin" : "signup"));
+    setAuthName(savedProfile?.name || savedAccounts[0]?.name || "");
     setAuthPassword("");
     setAuthConfirmPassword("");
     setAuthError("");
@@ -108,11 +164,36 @@ export default function App() {
   };
 
   const handleReplaceProfile = () => {
-    clearSavedProfile();
-    setProfile(null);
     setIsSignedIn(false);
+    setProfile(null);
     setAuthMode("signup");
     setAuthName("");
+    setAuthPassword("");
+    setAuthConfirmPassword("");
+    setAuthError("");
+  };
+
+  const handleDeleteCurrentAccount = () => {
+    if (!profile) return;
+
+    const remainingAccounts = readSavedAccounts().filter(
+      (account) => account.name.toLowerCase() !== profile.name.toLowerCase(),
+    );
+    saveAccounts(remainingAccounts);
+
+    const nextProfile = remainingAccounts[0] || null;
+    if (nextProfile) {
+      saveProfile(nextProfile);
+    } else {
+      clearSavedProfile();
+    }
+
+    setAccounts(remainingAccounts);
+    setProfile(nextProfile);
+    setDiaryAccountName(nextProfile?.name || "");
+    setIsSignedIn(false);
+    setAuthMode(remainingAccounts.length ? "signin" : "signup");
+    setAuthName(nextProfile?.name || "");
     setAuthPassword("");
     setAuthConfirmPassword("");
     setAuthError("");
@@ -121,8 +202,8 @@ export default function App() {
   const handleAuthSubmit = (event) => {
     event.preventDefault();
 
-    const savedProfile = readSavedProfile();
-    const cleanName = authName.trim();
+    const savedAccounts = readSavedAccounts();
+    const cleanName = normalizeAccountName(authName);
     const cleanPassword = authPassword.trim();
     const cleanConfirm = authConfirmPassword.trim();
 
@@ -139,25 +220,42 @@ export default function App() {
         setAuthError("Passwords do not match.");
         return;
       }
+      if (savedAccounts.some((account) => account.name.toLowerCase() === cleanName.toLowerCase())) {
+        setAuthError("An account with this name already exists. Choose it from Sign in.");
+        return;
+      }
 
       const nextProfile = { name: cleanName, password: cleanPassword };
+      const nextAccounts = [...savedAccounts, nextProfile];
+      saveAccounts(nextAccounts);
       saveProfile(nextProfile);
+      setAccounts(nextAccounts);
+      setDiaryAccountName(nextProfile.name);
       handleUnlock(nextProfile);
       return;
     }
 
-    if (!savedProfile) {
+    if (!savedAccounts.length) {
       setAuthMode("signup");
-      setAuthError("No local account found yet. Create one first.");
+      setAuthError("No Luna accounts found yet. Create one first.");
       return;
     }
 
-    if (cleanPassword !== savedProfile.password) {
-      setAuthError("That password doesn't match the saved Luna profile.");
+    const selectedAccount = savedAccounts.find(
+      (account) => account.name.toLowerCase() === cleanName.toLowerCase(),
+    );
+
+    if (!selectedAccount) {
+      setAuthError("Choose one of the saved Luna accounts.");
       return;
     }
 
-    handleUnlock(savedProfile);
+    if (cleanPassword !== selectedAccount.password) {
+      setAuthError("That password doesn't match this Luna account.");
+      return;
+    }
+
+    handleUnlock(selectedAccount);
   };
 
   useEffect(() => {
@@ -203,13 +301,39 @@ export default function App() {
   return (
     <div className={`site-shell ${isChatView ? "site-shell-chat" : ""}`}>
       <div className="site-cosmic-backdrop" />
+      <div className="site-atmosphere" aria-hidden="true">
+        <div className="site-orb site-orb-a" />
+        <div className="site-orb site-orb-b" />
+      </div>
+      <div className="site-noise" aria-hidden="true" />
       <div className="site-stars" />
+
+      {isChatView && (
+        <button
+          type="button"
+          className="site-brand site-brand-floating"
+          onClick={goHome}
+          aria-label="Return to Luna home"
+          title="Return home"
+        >
+          <span className="site-brand-mark">
+            <span className="site-brand-mark-core" />
+            <span className="site-brand-mark-stroke" />
+          </span>
+          <span>
+            <span className="site-brand-name">Luna</span>
+            <span className="site-brand-subtitle">Companion</span>
+          </span>
+        </button>
+      )}
 
       {!isChatView && <header className="site-header">
         <button
           type="button"
           className="site-brand"
-          onClick={() => setActiveTab(isSignedIn ? "chat" : "overview")}
+          onClick={goHome}
+          aria-label="Return to Luna home"
+          title="Return home"
         >
           <span className="site-brand-mark">
             <span className="site-brand-mark-core" />
@@ -221,29 +345,6 @@ export default function App() {
           </span>
         </button>
 
-        <div className="site-header-actions">
-          <nav className="site-nav" aria-label="Primary">
-            <button
-              type="button"
-              className={`site-tab-button ${activeTab === "diary" ? "site-tab-button-active" : ""}`}
-              onClick={() => setActiveTab("diary")}
-            >
-              Diary
-            </button>
-            <button
-              type="button"
-              className={`site-tab-button ${isAuthModalOpen ? "site-tab-button-active" : ""}`}
-              onClick={() => openAuthModal(profile ? "signin" : "signup")}
-            >
-              {authButtonLabel}
-            </button>
-          </nav>
-          {isSignedIn ? (
-            <button type="button" className="site-ghost-button" onClick={handleSignOut}>
-              Sign out
-            </button>
-          ) : null}
-        </div>
       </header>}
 
       <main className={`site-main ${isChatView ? "site-main-chat" : ""}`}>
@@ -260,6 +361,32 @@ export default function App() {
             <p className="minimal-home-subtitle">
               A calm space for thoughtful conversation, private journaling, and everyday reflection.
             </p>
+
+            <div className="minimal-home-divider" aria-hidden="true" />
+
+            <div className="minimal-home-actions">
+              <button
+                type="button"
+                className="minimal-home-cta minimal-home-cta-primary"
+                onClick={() => {
+                  if (isSignedIn) {
+                    setActiveTab("chat");
+                  } else {
+                    openAuthModal(accountChoices.length ? "signin" : "signup");
+                  }
+                }}
+              >
+                <span className="minimal-home-cta-shine" aria-hidden="true" />
+                {isSignedIn
+                  ? "Enter Luna"
+                  : profile
+                    ? "Sign in & begin"
+                    : "Begin with Luna"}
+              </button>
+              <button type="button" className="minimal-home-cta minimal-home-cta-secondary" onClick={() => setActiveTab("diary")}>
+                Open diary
+              </button>
+            </div>
 
             <div className="minimal-presence-strip" aria-label="About Luna">
               <div className="minimal-presence-card">
@@ -296,20 +423,13 @@ export default function App() {
         )}
 
         {activeTab === "diary" && (
-          <section className="site-content-panel">
-            <div className="site-section-heading">
-              <div>
-                <div className="section-kicker">Diary</div>
-                <h2>Private Luna diary</h2>
-              </div>
-              <p>Your notes stay local, and Luna can shape a day-story from today's chats.</p>
-            </div>
-
+          <section className="site-content-panel diary-content-panel">
             <DiaryTab
-              userName={isSignedIn ? profile?.name || "You" : "Guest"}
-              storageSeed={profile?.name || "guest"}
-              isSignedIn={isSignedIn}
-              onSignInClick={() => openAuthModal(profile ? "signin" : "signup")}
+              userName={diaryUserName}
+              storageSeed={diaryAccount?.name || "guest"}
+              accounts={accountChoices}
+              selectedAccountName={diaryAccount?.name || ""}
+              onAccountChange={setDiaryAccountName}
             />
           </section>
         )}
@@ -345,7 +465,7 @@ export default function App() {
                   <div className="auth-signed-in-label">Currently signed in</div>
                   <div className="auth-signed-in-name">{profile?.name || "You"}</div>
                   <p className="auth-signed-in-copy">
-                    Your Luna profile is active on this device. You can sign out or replace the saved local profile.
+                    This Luna account is active on this device. Its chat history and diary stay separate from your other accounts.
                   </p>
                 </div>
 
@@ -356,9 +476,23 @@ export default function App() {
                   <button
                     type="button"
                     className="site-secondary-button"
-                    onClick={handleReplaceProfile}
+                    onClick={() => {
+                      setIsSignedIn(false);
+                      setAuthMode("signin");
+                      setAuthName(profile?.name || accountChoices[0]?.name || "");
+                      setAuthPassword("");
+                      setAuthConfirmPassword("");
+                      setAuthError("");
+                    }}
                   >
-                    Reset saved profile
+                    Switch account
+                  </button>
+                  <button
+                    type="button"
+                    className="site-secondary-button"
+                    onClick={handleDeleteCurrentAccount}
+                  >
+                    Delete account
                   </button>
                   <button type="button" className="site-primary-button" onClick={() => setIsAuthModalOpen(false)}>
                     Continue
@@ -373,6 +507,7 @@ export default function App() {
                     className={`auth-mode-button ${authMode === "signin" ? "auth-mode-button-active" : ""}`}
                     onClick={() => {
                       setAuthMode("signin");
+                      setAuthName(profile?.name || accountChoices[0]?.name || "");
                       setAuthError("");
                     }}
                   >
@@ -383,6 +518,7 @@ export default function App() {
                     className={`auth-mode-button ${authMode === "signup" ? "auth-mode-button-active" : ""}`}
                     onClick={() => {
                       setAuthMode("signup");
+                      setAuthName("");
                       setAuthError("");
                     }}
                   >
@@ -393,18 +529,34 @@ export default function App() {
                 <form className="auth-form" onSubmit={handleAuthSubmit}>
                   <div className="auth-form-grid">
                     <label className="auth-field">
-                      <span>Name</span>
-                      <input
-                        type="text"
-                        className="auth-input"
-                        value={authName}
-                        disabled={authMode === "signin" && !!profile}
-                        placeholder="How should Luna call you?"
-                        onChange={(event) => {
-                          setAuthName(event.target.value);
-                          if (authError) setAuthError("");
-                        }}
-                      />
+                      <span>{authMode === "signin" ? "Account" : "Name"}</span>
+                      {authMode === "signin" && accountChoices.length ? (
+                        <select
+                          className="auth-input"
+                          value={authName}
+                          onChange={(event) => {
+                            setAuthName(event.target.value);
+                            if (authError) setAuthError("");
+                          }}
+                        >
+                          {accountChoices.map((account) => (
+                            <option key={account.name} value={account.name}>
+                              {account.name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type="text"
+                          className="auth-input"
+                          value={authName}
+                          placeholder="How should Luna call you?"
+                          onChange={(event) => {
+                            setAuthName(event.target.value);
+                            if (authError) setAuthError("");
+                          }}
+                        />
+                      )}
                     </label>
 
                     <label className="auth-field">
@@ -441,20 +593,20 @@ export default function App() {
                   <div className="auth-status-line">
                     {authError ||
                       (authMode === "signin"
-                        ? profile
-                          ? `Welcome back, ${profile.name}. Enter your password to continue.`
-                          : "No saved Luna profile yet. Switch to Sign up to create one."
-                        : "This Luna profile is stored locally in your browser.")}
+                        ? accountChoices.length
+                          ? `Choose an account. Luna will open only that account's chat and diary.`
+                          : "No Luna accounts found yet. Switch to Sign up to create one."
+                        : "Creating an account also creates its own Luna chat and diary space.")}
                   </div>
 
                   <div className="auth-actions-row">
-                    {profile && authMode === "signin" && (
+                    {accountChoices.length > 0 && authMode === "signin" && (
                       <button
                         type="button"
                         className="site-ghost-button"
                         onClick={handleReplaceProfile}
                       >
-                        Start fresh
+                        Create another
                       </button>
                     )}
                     <button type="submit" className="site-primary-button">

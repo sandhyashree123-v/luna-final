@@ -4,14 +4,14 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -n api,vite -c blue,magenta \"npm run dev:api\" \"npm run dev:vite\"",
+    "dev:vite": "vite",
+    "dev:api": "cd InnerVoice_Jelly && python -m uvicorn backend:app --reload --host 127.0.0.1 --port 8000",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
-    "@react-three/drei": "^10.7.7",
-    "@react-three/fiber": "^9.4.2",
     "axios": "^1.13.2",
     "microsoft-cognitiveservices-speech-sdk": "^1.48.0",
     "react": "^19.2.0",
@@ -22,6 +22,7 @@
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
+    "concurrently": "^9.2.1",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",

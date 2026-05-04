@@ -1,19 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
-
-const API_BASE = (() => {
-  const configuredBase = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/+$/, "");
-  if (configuredBase) return configuredBase;
-
-  if (typeof window !== "undefined") {
-    const { hostname, origin } = window.location;
-    if (hostname === "localhost" || hostname === "127.0.0.1") {
-      return "http://127.0.0.1:8000";
-    }
-    return origin.replace(/\/+$/, "");
-  }
-
-  return "http://127.0.0.1:8000";
-})();
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { API_BASE } from "./apiBase";
 
 function createDiaryStorageKey(seed) {
   const normalized = String(seed || "guest")
@@ -29,8 +15,7 @@ function formatEntryDate(value) {
   if (Number.isNaN(date.getTime())) return "Just now";
 
   return new Intl.DateTimeFormat("en-IN", {
-    dateStyle: "medium",
-    timeStyle: "short",
+    dateStyle: "full",
   }).format(date);
 }
 
@@ -38,20 +23,65 @@ function createAutoEntryId(value) {
   return `luna-auto-story:${value || "today"}`;
 }
 
+function splitStoryParagraphs(text) {
+  return String(text || "")
+    .split(/\n{2,}/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
+
+function storyToAutoEntry(data) {
+  const story = String(data?.story || "").trim();
+  if (!story) return null;
+
+  const diaryDate = String(data?.date || new Date().toISOString().slice(0, 10));
+  return {
+    id: createAutoEntryId(diaryDate),
+    title: data?.title?.trim() || "Luna's note for today",
+    body: story,
+    createdAt: `${diaryDate}T12:00:00`,
+    updatedAt: data?.generated_at || new Date().toISOString(),
+    kind: "luna-auto",
+    sourceCount: Number(data?.entry_count || 0),
+  };
+}
+
+function sortDiaryEntries(entries) {
+  return [...entries].sort((a, b) => {
+    const bTime = new Date(b.createdAt || 0).getTime();
+    const aTime = new Date(a.createdAt || 0).getTime();
+    return (Number.isNaN(bTime) ? 0 : bTime) - (Number.isNaN(aTime) ? 0 : aTime);
+  });
+}
+
 export default function DiaryTab({
-  userName = "Guest",
+  userName = "Choose account",
   storageSeed = "guest",
-  isSignedIn = false,
-  onSignInClick,
+  accounts = [],
+  selectedAccountName = "",
+  onAccountChange,
 }) {
   const storageKey = useMemo(() => createDiaryStorageKey(storageSeed), [storageSeed]);
+  const hasAccount = userName !== "Choose account";
   const [entries, setEntries] = useState([]);
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
   const [status, setStatus] = useState("");
   const [isGeneratingStory, setIsGeneratingStory] = useState(false);
+  const [pageIndex, setPageIndex] = useState(0);
+  const [turnDirection, setTurnDirection] = useState("idle");
+  const skipNextLocalSaveRef = useRef(true);
+
+  const sortedEntries = useMemo(() => sortDiaryEntries(entries), [entries]);
+  const activeEntry = sortedEntries[pageIndex] || null;
+  const activeParagraphs = activeEntry ? splitStoryParagraphs(activeEntry.body).slice(0, 5) : [];
+  const canGoPrevious = pageIndex > 0;
+  const canGoNext = pageIndex < sortedEntries.length - 1;
 
   useEffect(() => {
+    skipNextLocalSaveRef.current = true;
+    setPageIndex(0);
+    setTurnDirection("idle");
+    setStatus("");
+
     try {
       const saved = window.localStorage.getItem(storageKey);
       if (!saved) {
@@ -67,6 +97,11 @@ export default function DiaryTab({
   }, [storageKey]);
 
   useEffect(() => {
+    if (skipNextLocalSaveRef.current) {
+      skipNextLocalSaveRef.current = false;
+      return;
+    }
+
     try {
       window.localStorage.setItem(storageKey, JSON.stringify(entries));
     } catch {
@@ -75,7 +110,7 @@ export default function DiaryTab({
   }, [entries, storageKey]);
 
   useEffect(() => {
-    if (!isSignedIn) return undefined;
+    if (!hasAccount) return undefined;
 
     let cancelled = false;
     const loadLunaStory = async () => {
@@ -83,31 +118,45 @@ export default function DiaryTab({
 
       try {
         const response = await fetch(
-          `${API_BASE}/diary/story?user_name=${encodeURIComponent(userName)}&language=en-IN`
+          `${API_BASE}/diary/stories?user_name=${encodeURIComponent(userName)}&language=en-IN&limit_days=30`,
         );
         if (!response.ok) {
           throw new Error(`Diary story request failed with ${response.status}`);
         }
 
         const data = await response.json();
-        if (cancelled || !data?.story?.trim()) return;
+        if (cancelled) return;
 
-        const autoEntry = {
-          id: createAutoEntryId(data.date),
-          title: data.title?.trim() || "Luna's note for today",
-          body: data.story.trim(),
-          createdAt: data.generated_at || new Date().toISOString(),
-          kind: "luna-auto",
-          sourceCount: Number(data.entry_count || 0),
-        };
+        const autoEntries = (Array.isArray(data?.stories) ? data.stories : [])
+          .map(storyToAutoEntry)
+          .filter(Boolean);
+        if (!autoEntries.length) return;
 
         setEntries((current) => {
-          const withoutSameAuto = current.filter((entry) => entry.id !== autoEntry.id);
-          return [autoEntry, ...withoutSameAuto];
+          const autoIds = new Set(autoEntries.map((entry) => entry.id));
+          const withoutSameAuto = current.filter((entry) => !autoIds.has(entry.id));
+          return [...autoEntries, ...withoutSameAuto];
         });
       } catch {
         if (!cancelled) {
-          setStatus((current) => current || "Luna couldn't shape today's diary story right now.");
+          try {
+            const fallbackResponse = await fetch(
+              `${API_BASE}/diary/story?user_name=${encodeURIComponent(userName)}&language=en-IN`,
+            );
+            if (!fallbackResponse.ok) throw new Error("Diary story fallback failed");
+            const fallbackData = await fallbackResponse.json();
+            const autoEntry = storyToAutoEntry(fallbackData);
+            if (cancelled || !autoEntry) return;
+
+            setEntries((current) => {
+              const withoutSameAuto = current.filter((entry) => entry.id !== autoEntry.id);
+              return [autoEntry, ...withoutSameAuto];
+            });
+          } catch {
+            if (!cancelled) {
+              setStatus((current) => current || "Luna couldn't shape this diary right now.");
+            }
+          }
         }
       } finally {
         if (!cancelled) {
@@ -120,159 +169,114 @@ export default function DiaryTab({
     return () => {
       cancelled = true;
     };
-  }, [isSignedIn, userName, storageKey]);
+  }, [hasAccount, userName, storageKey]);
 
-  const handleSave = () => {
-    const cleanBody = body.trim();
-    const cleanTitle = title.trim();
-
-    if (!cleanBody) {
-      setStatus("Write a few lines before saving your entry.");
-      return;
-    }
-
-    const nextEntry = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      title: cleanTitle || "Untitled entry",
-      body: cleanBody,
-      createdAt: new Date().toISOString(),
-    };
-
-    setEntries((current) => [nextEntry, ...current]);
-    setTitle("");
-    setBody("");
-    setStatus("Diary entry saved locally.");
-  };
-
-  const handleDelete = (entryId) => {
-    setEntries((current) => current.filter((entry) => entry.id !== entryId));
-    setStatus("Diary entry removed.");
+  const goToPage = (nextIndex, direction) => {
+    if (nextIndex < 0 || nextIndex >= sortedEntries.length) return;
+    setTurnDirection(direction);
+    setPageIndex(nextIndex);
   };
 
   return (
-    <div className="diary-shell">
-      <div className="diary-hero-card">
-        <div>
-          <div className="section-kicker">Reflect</div>
-          <h3 className="diary-hero-title">A calm space for {userName}&apos;s thoughts.</h3>
-          <p className="diary-hero-text">
-            Save private reflections, small wins, and emotional check-ins. Luna also turns today's conversations into a soft diary story for you.
-          </p>
+    <div className="diary-shell diary-book-shell">
+      <div className="diary-hero-card diary-reader-toolbar">
+        <div className="diary-toolbar-title">
+          <div className="section-kicker">Diary</div>
+          <strong>{activeEntry ? formatEntryDate(activeEntry.createdAt) : "Daily memory book"}</strong>
         </div>
 
-        <div className="diary-stats">
-          <div className="diary-stat-card">
-            <span className="diary-stat-label">Entries</span>
-            <strong>{entries.length}</strong>
-          </div>
-          <div className="diary-stat-card">
-            <span className="diary-stat-label">Mode</span>
-            <strong>{isSignedIn ? "Personal" : "Guest"}</strong>
-          </div>
-        </div>
-      </div>
-
-      <div className="diary-grid">
-        <div className="diary-composer-card">
-          <label className="diary-label" htmlFor="luna-diary-title">
-            Title
-          </label>
-          <input
-            id="luna-diary-title"
-            className="diary-input"
-            type="text"
-            value={title}
-            placeholder="Today felt like..."
-            onChange={(event) => {
-              setTitle(event.target.value);
-              if (status) setStatus("");
-            }}
-          />
-
-          <label className="diary-label" htmlFor="luna-diary-body">
-            Entry
-          </label>
-          <textarea
-            id="luna-diary-body"
-            className="diary-textarea"
-            value={body}
-            placeholder="Write whatever is on your mind. It can be messy, honest, short, or long."
-            onChange={(event) => {
-              setBody(event.target.value);
-              if (status) setStatus("");
-            }}
-          />
-
-          <div className="diary-actions">
-            <button type="button" className="site-primary-button" onClick={handleSave}>
-              Save entry
-            </button>
-            <button
-              type="button"
-              className="site-secondary-button"
-              onClick={() => {
-                setTitle("");
-                setBody("");
-                setStatus("");
+        <div className="diary-reader-controls">
+          <label className="diary-account-field">
+            <span>Account</span>
+            <select
+              className="diary-account-select"
+              value={selectedAccountName}
+              disabled={!accounts.length}
+              onChange={(event) => {
+                if (typeof onAccountChange === "function") {
+                  onAccountChange(event.target.value);
+                }
               }}
             >
-              Clear
-            </button>
+              {accounts.length ? (
+                accounts.map((account) => (
+                  <option key={account.name} value={account.name}>
+                    {account.name}
+                  </option>
+                ))
+              ) : (
+                <option value="">No accounts yet</option>
+              )}
+            </select>
+          </label>
+
+          <div className="diary-stats diary-reader-stats">
+            <div className="diary-stat-card">
+              <span className="diary-stat-label">Pages</span>
+              <strong>{sortedEntries.length}</strong>
+            </div>
           </div>
-
-          <div className="diary-status">{status || "Tip: use the diary for emotions, gratitude, or quick daily notes."}</div>
-          {isSignedIn && (
-            <div className="diary-auto-hint">
-              {isGeneratingStory ? "Luna is shaping today's diary story..." : "Today's Luna story refreshes automatically from your chats."}
-            </div>
-          )}
-
-          {!isSignedIn && typeof onSignInClick === "function" && (
-            <button type="button" className="diary-inline-link" onClick={onSignInClick}>
-              Sign in or sign up if you want Luna chat and diary to feel more personal.
-            </button>
-          )}
-        </div>
-
-        <div className="diary-history-card">
-          <div className="diary-history-header">
-            <h3>Saved entries</h3>
-            <span>{entries.length ? `${entries.length} total` : "No entries yet"}</span>
-          </div>
-
-          {entries.length === 0 ? (
-            <div className="diary-empty-state">
-              Your diary is empty right now. Write your first note and it will show up here.
-            </div>
-          ) : (
-            <div className="diary-entry-list">
-              {entries.map((entry) => (
-                <article key={entry.id} className="diary-entry-card">
-                  <div className="diary-entry-top">
-                    <div>
-                      {entry.kind === "luna-auto" && <div className="diary-entry-badge">Luna's story</div>}
-                      <h4>{entry.title}</h4>
-                      <div className="diary-entry-date">{formatEntryDate(entry.createdAt)}</div>
-                    </div>
-                    {entry.kind !== "luna-auto" ? (
-                      <button
-                        type="button"
-                        className="diary-delete-button"
-                        onClick={() => handleDelete(entry.id)}
-                      >
-                        Delete
-                      </button>
-                    ) : (
-                      <div className="diary-entry-meta">{entry.sourceCount ? `${entry.sourceCount} chat moments` : "Auto-written from chat"}</div>
-                    )}
-                  </div>
-                  <p>{entry.body}</p>
-                </article>
-              ))}
-            </div>
-          )}
         </div>
       </div>
+
+      <section className="diary-book-stage" aria-label="Luna diary book">
+        <div
+          key={activeEntry?.id || "empty-diary-book"}
+          className={`diary-book ${turnDirection === "next" ? "diary-book-turn-next" : ""} ${turnDirection === "previous" ? "diary-book-turn-previous" : ""}`}
+        >
+          <div className={`diary-turn-sheet ${turnDirection === "next" ? "diary-turn-sheet-next" : ""} ${turnDirection === "previous" ? "diary-turn-sheet-previous" : ""}`} aria-hidden="true" />
+          <div className="diary-book-spine" aria-hidden="true" />
+          <article className="diary-book-page diary-book-page-left">
+            <div className="diary-page-kicker">One day memory</div>
+            <h3>{activeEntry?.title || "No diary pages yet"}</h3>
+            <div className="diary-page-date">
+              {activeEntry ? formatEntryDate(activeEntry.createdAt) : "Start a chat and Luna will write the first page."}
+            </div>
+            <div className="diary-page-meta">
+              {activeEntry?.sourceCount ? `${activeEntry.sourceCount} chat moments` : isGeneratingStory ? "Refreshing from today's chats" : "Auto-written from chat"}
+            </div>
+            {status && <div className="diary-page-status">{status}</div>}
+          </article>
+
+          <article className="diary-book-page diary-book-page-right">
+            {activeEntry ? (
+              <div className="diary-story-body diary-page-story">
+                {activeParagraphs.map((paragraph, index) => (
+                  <p key={`${activeEntry.id}-p-${index}`}>{paragraph}</p>
+                ))}
+              </div>
+            ) : (
+              <div className="diary-empty-state">
+                {hasAccount
+                  ? "This account has no diary story yet. Chat with Luna and come back here."
+                  : "Choose an account from the dropdown to read its diary."}
+              </div>
+            )}
+          </article>
+        </div>
+
+        <div className="diary-page-controls" aria-label="Diary page controls">
+          <button
+            type="button"
+            className="site-secondary-button diary-page-button"
+            disabled={!canGoPrevious}
+            onClick={() => goToPage(pageIndex - 1, "previous")}
+          >
+            Previous page
+          </button>
+          <div className="diary-page-count">
+            {sortedEntries.length ? `${pageIndex + 1} / ${sortedEntries.length}` : "0 / 0"}
+          </div>
+          <button
+            type="button"
+            className="site-primary-button diary-page-button"
+            disabled={!canGoNext}
+            onClick={() => goToPage(pageIndex + 1, "next")}
+          >
+            Next page
+          </button>
+        </div>
+      </section>
     </div>
   );
 }

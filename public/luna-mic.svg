@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+  <title id="title">LUNA microphone</title>
+  <desc id="desc">A modern glass microphone icon in LUNA theme colors.</desc>
+  <defs>
+    <radialGradient id="halo" cx="34%" cy="22%" r="72%">
+      <stop offset="0%" stop-color="#fff6d8" stop-opacity=".95"/>
+      <stop offset="38%" stop-color="#d9bcff" stop-opacity=".62"/>
+      <stop offset="72%" stop-color="#78dce4" stop-opacity=".28"/>
+      <stop offset="100%" stop-color="#151725" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="body" x1="24" y1="10" x2="72" y2="74" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff7d7"/>
+      <stop offset=".28" stop-color="#f0d3ff"/>
+      <stop offset=".64" stop-color="#9aa7ff"/>
+      <stop offset="1" stop-color="#60d9d4"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="30" y1="15" x2="63" y2="66" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".84"/>
+      <stop offset=".36" stop-color="#efe5ff" stop-opacity=".38"/>
+      <stop offset="1" stop-color="#181a28" stop-opacity=".24"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="3.2" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 .66 0 0 0 0 .72 0 0 0 0 1 0 0 0 .72 0"/>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <circle cx="48" cy="48" r="42" fill="url(#halo)"/>
+  <path d="M23 43c0 13.8 10.2 24.4 25 24.4S73 56.8 73 43" fill="none" stroke="#c8d3ff" stroke-width="5.5" stroke-linecap="round" opacity=".82"/>
+  <path d="M48 67.5v12.2" fill="none" stroke="#d8e4ff" stroke-width="5.5" stroke-linecap="round"/>
+  <path d="M35.5 81h25" fill="none" stroke="#d8e4ff" stroke-width="5.5" stroke-linecap="round"/>
+  <rect x="31" y="12" width="34" height="49" rx="17" fill="url(#body)" filter="url(#glow)"/>
+  <rect x="36" y="17" width="24" height="39" rx="12" fill="url(#glass)" opacity=".76"/>
+  <path d="M39 27h18M39 37h18M40 47h16" fill="none" stroke="#211f35" stroke-opacity=".36" stroke-width="3" stroke-linecap="round"/>
+  <path d="M39 21c2.4-2.8 5.4-4.2 9-4.2" fill="none" stroke="#fffdf0" stroke-width="3" stroke-linecap="round" opacity=".82"/>
+</svg>

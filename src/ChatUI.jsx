@@ -1,23 +1,9 @@
-﻿import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import * as SpeechSDK from "microsoft-cognitiveservices-speech-sdk";
 import MoonScene from "./MoonScene";
+import { API_BASE } from "./apiBase";
 import "./App.css";
-
-const API_BASE = (() => {
-  const configuredBase = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/+$/, "");
-  if (configuredBase) return configuredBase;
-
-  if (typeof window !== "undefined") {
-    const { hostname, origin } = window.location;
-    if (hostname === "localhost" || hostname === "127.0.0.1") {
-      return "http://127.0.0.1:8000";
-    }
-    return origin.replace(/\/+$/, "");
-  }
-
-  return "http://127.0.0.1:8000";
-})();
 
 const SONOTHERAPY_PROFILES = {
   angry: {
@@ -98,6 +84,28 @@ function detectMoodFromText(text) {
     if (keywords.some((keyword) => lowered.includes(keyword))) return mood;
   }
   return "neutral";
+}
+
+function buildLocalConnectionFallback(text, mood) {
+  const compact = String(text || "").toLowerCase();
+
+  if (mood === "sad" || /sad|hurt|cry|lonely|broken|empty/.test(compact)) {
+    return "Ayy, I heard you. My server connection slipped, but I am still here with you. Tell me what hurt first, slowly.";
+  }
+
+  if (mood === "anxious" || /anxious|stress|panic|worried|overthinking/.test(compact)) {
+    return "Ayy breathe, I got you. My server connection slipped for a moment, but stay with one small thought at a time.";
+  }
+
+  if (mood === "angry" || /angry|mad|frustrated|irritated/.test(compact)) {
+    return "Oho, I heard the fire in that. My server connection slipped, but say it properly here. What happened?";
+  }
+
+  if (mood === "tired" || /tired|exhausted|drained|sleepy/.test(compact)) {
+    return "Ayy, you sound worn out. My server connection slipped, but do not push yourself harder right now. Sit with me a second.";
+  }
+
+  return "Ayy, I heard you. My server connection slipped for a moment, but I am still here. Try once more, or tell me a little more.";
 }
 
 function stripForSpeech(raw) {
@@ -260,6 +268,7 @@ function createMessage(sender, text, extras = {}) {
     sender,
     text: sender === "luna" ? sanitizeLunaReplyText(text) : text,
     wisdomUsed: Array.isArray(extras.wisdomUsed) ? extras.wisdomUsed : [],
+    explain: extras.explain && typeof extras.explain === "object" ? extras.explain : null,
   };
 }
 
@@ -296,6 +305,7 @@ function ChatUI({ userName = "You", embedded = false }) {
   const [voiceSaving, setVoiceSaving] = useState("");
   const [voiceSearch, setVoiceSearch] = useState("");
   const [voiceStudioError, setVoiceStudioError] = useState("");
+  const [voiceListHint, setVoiceListHint] = useState("");
   const [voiceStudioStatus, setVoiceStudioStatus] = useState("");
   const [ttsStatus, setTtsStatus] = useState("idle");
   const [openWisdomMessageId, setOpenWisdomMessageId] = useState(null);
@@ -315,10 +325,21 @@ function ChatUI({ userName = "You", embedded = false }) {
     return LANGUAGE_OPTIONS.some((option) => option.code === saved) ? saved : "en-IN";
   });
   const [selectedInputDeviceId, setSelectedInputDeviceId] = useState("");
+  const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
 
   const chatScrollRef = useRef(null);
   const bgmRef = useRef(null);
   const ttsRef = useRef(null);
+  /** Normalized 0–1 mouth drive read by MoonScene ModelRig while Luna is speaking. */
+  const lipSyncAmpRef = useRef(0);
+  const webSpeechPulseRef = useRef(0);
+  const ttsAudioCtxRef = useRef(null);
+  const ttsAnalyserRef = useRef(null);
+  const ttsAudioLinkedRef = useRef(false);
+  const lipRafRef = useRef(null);
+  const isSpeakingRef = useRef(false);
+  /** When set, calling it completes the active `playAudioBlob` promise (needed for Stop / teardown). */
+  const ttsPlaybackCompleteRef = useRef(null);
   const fadeRef = useRef(null);
   const synthRef = useRef(window.speechSynthesis);
   const voicesRef = useRef([]);
@@ -331,13 +352,59 @@ function ChatUI({ userName = "You", embedded = false }) {
   const voiceTranscriptRef = useRef("");
   const shouldAutoSendVoiceRef = useRef(false);
   const sendMessageRef = useRef(null);
+  const voiceStudioFetchedRef = useRef(false);
   const loadedTrackRef = useRef(MOOD_TRACKS.neutral);
   const isPlayingRef = useRef(false);
   const currentMoodRef = useRef("neutral");
   const bgmVolumeRef = useRef(0.9);
   const voiceVolumeRef = useRef(1);
   const selectedLanguageRef = useRef("en-IN");
+  const shouldStickToBottomRef = useRef(true);
+  const pendingVoiceMoodHintRef = useRef(null);
   const conversationStorageKey = createConversationStorageKey(userName);
+
+  const inferMoodFromVoiceTone = useCallback(async (blob) => {
+    try {
+      const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextCtor || !blob) return null;
+      const ctx = new AudioContextCtor();
+      const arrayBuffer = await blob.arrayBuffer();
+      const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
+      const samples = decoded.getChannelData(0);
+      if (!samples?.length) {
+        await ctx.close().catch(() => {});
+        return null;
+      }
+
+      let sumSq = 0;
+      let zeroCrossings = 0;
+      let previousSign = 0;
+      const step = Math.max(1, Math.floor(samples.length / 24000));
+
+      for (let index = 0; index < samples.length; index += step) {
+        const sample = samples[index];
+        sumSq += sample * sample;
+        const sign = sample >= 0 ? 1 : -1;
+        if (previousSign && sign !== previousSign) zeroCrossings += 1;
+        previousSign = sign;
+      }
+
+      const sampleCount = Math.ceil(samples.length / step);
+      const rms = Math.sqrt(sumSq / Math.max(1, sampleCount));
+      const zcr = zeroCrossings / Math.max(1, sampleCount);
+      await ctx.close().catch(() => {});
+
+      if (rms > 0.14 && zcr < 0.085) return "angry";
+      if (rms > 0.11 && zcr > 0.13) return "anxious";
+      if (rms < 0.038) return "tired";
+      if (rms < 0.06 && zcr < 0.075) return "sad";
+      if (rms > 0.095 && zcr < 0.1) return "hopeful";
+      return "neutral";
+    } catch (error) {
+      ignoreExpectedError("Voice tone inference skipped", error);
+      return null;
+    }
+  }, []);
 
   const stopMicStream = useCallback(() => {
     const stream = mediaStreamRef.current;
@@ -369,17 +436,96 @@ function ChatUI({ userName = "You", embedded = false }) {
   }, [voiceVolumeLevel]);
 
   useEffect(() => {
+    isSpeakingRef.current = isSpeaking;
+  }, [isSpeaking]);
+
+  /** Drive lip-sync from TTS waveform (streaming MP3) or Web Speech pulses. */
+  useEffect(() => {
+    const stopLoop = () => {
+      if (lipRafRef.current != null) {
+        cancelAnimationFrame(lipRafRef.current);
+        lipRafRef.current = null;
+      }
+      lipSyncAmpRef.current = 0;
+      webSpeechPulseRef.current = 0;
+    };
+
+    if (!isSpeaking) {
+      stopLoop();
+      return undefined;
+    }
+
+    const td = new Uint8Array(2048);
+
+    const tick = () => {
+      const audio = ttsRef.current;
+      const analyser = ttsAnalyserRef.current;
+
+      let amp = 0;
+      const durationKnown = !!(audio && Number.isFinite(audio.duration) && audio.duration > 0);
+      const usingElementAudio =
+        audio &&
+        !!audio.src &&
+        !audio.paused &&
+        (durationKnown ? audio.currentTime < audio.duration : (audio.readyState ?? 0) >= 2);
+
+      if (usingElementAudio && analyser) {
+        analyser.getByteTimeDomainData(td);
+        let sum = 0;
+        for (let i = 0; i < td.length; i += 1) {
+          const n = (td[i] - 128) / 128;
+          sum += n * n;
+        }
+        const rms = Math.sqrt(sum / td.length);
+        amp = Math.min(1, Math.max(0, (rms - 0.012) * 5.5));
+      } else if (typeof window !== "undefined" && window.speechSynthesis && window.speechSynthesis.speaking) {
+        webSpeechPulseRef.current *= 0.935;
+        const wobble = 0.17 + Math.sin(performance.now() * 0.019) * 0.52;
+        const base = Math.max(webSpeechPulseRef.current, Math.abs(wobble) * 0.48);
+        amp = Math.min(1, base);
+      }
+
+      lipSyncAmpRef.current = Math.min(1, Math.max(0, amp));
+
+      if (isSpeakingRef.current) {
+        lipRafRef.current = requestAnimationFrame(tick);
+      }
+    };
+
+    lipRafRef.current = requestAnimationFrame(tick);
+    return stopLoop;
+  }, [isSpeaking]);
+
+  useEffect(() => {
     selectedLanguageRef.current = selectedLanguage;
     window.localStorage.setItem("luna_language", selectedLanguage);
   }, [selectedLanguage]);
 
   useEffect(() => {
+    if (!sessionMenuOpen) return undefined;
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setSessionMenuOpen(false);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [sessionMenuOpen]);
+
+  useEffect(() => {
     const container = chatScrollRef.current;
     if (!container) return;
 
+    if (!shouldStickToBottomRef.current) return;
+
+    const prefersReducedMotion = typeof window !== "undefined"
+      && window.matchMedia
+      && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const shouldAnimate = !prefersReducedMotion && messages.length < 80;
+
     container.scrollTo({
       top: container.scrollHeight,
-      behavior: "smooth",
+      behavior: shouldAnimate ? "smooth" : "auto",
     });
   }, [messages, isSending]);
 
@@ -444,27 +590,45 @@ function ChatUI({ userName = "You", embedded = false }) {
   }, [refreshInputDevices]);
 
   useEffect(() => {
-    if (!showVoiceStudio || voiceOptions.length || isLoadingVoices) return;
+    if (!showVoiceStudio) {
+      voiceStudioFetchedRef.current = false;
+      setVoiceListHint("");
+      setVoiceOptions([]);
+      setVoiceStudioError("");
+      return;
+    }
+
+    if (voiceStudioFetchedRef.current) return;
+    voiceStudioFetchedRef.current = true;
 
     const loadVoices = async () => {
       setIsLoadingVoices(true);
       setVoiceStudioError("");
+      setVoiceListHint("");
 
       try {
         const response = await axios.get(`${API_BASE}/voices`);
         const data = response.data || {};
-        setVoiceOptions(Array.isArray(data.voices) ? data.voices : []);
+        const voices = Array.isArray(data.voices) ? data.voices : [];
+        setVoiceOptions(voices);
         setSelectedVoice(data.selected_voice || "");
+        if (!voices.length) {
+          setVoiceListHint(
+            data.detail
+              ? String(data.detail)
+              : "Azure returned no English voices. Check AZURE_SPEECH_KEY and AZURE_SPEECH_REGION on the backend.",
+          );
+        }
       } catch (error) {
         console.error("Voice list error:", error);
-        setVoiceStudioError("Couldn't load Azure voices right now.");
+        setVoiceStudioError("Couldn't reach the backend for voices. Is InnerVoice_Jelly running on port 8000?");
       } finally {
         setIsLoadingVoices(false);
       }
     };
 
     loadVoices();
-  }, [showVoiceStudio, voiceOptions.length, isLoadingVoices]);
+  }, [showVoiceStudio]);
 
   useEffect(() => {
     const synth = synthRef.current;
@@ -578,6 +742,33 @@ function ChatUI({ userName = "You", embedded = false }) {
     stopMicStream();
   }, [stopMicStream]);
 
+  const linkTtsAnalyserIfNeeded = useCallback(() => {
+    const audioElement = ttsRef.current;
+    if (!audioElement || ttsAudioLinkedRef.current) return;
+
+    try {
+      const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextCtor) return;
+
+      if (!ttsAudioCtxRef.current) {
+        ttsAudioCtxRef.current = new AudioContextCtor();
+      }
+
+      const ctx = ttsAudioCtxRef.current;
+      const src = ctx.createMediaElementSource(audioElement);
+      const analyserNode = ctx.createAnalyser();
+      analyserNode.fftSize = 2048;
+      analyserNode.smoothingTimeConstant = 0.45;
+      src.connect(analyserNode);
+      analyserNode.connect(ctx.destination);
+
+      ttsAnalyserRef.current = analyserNode;
+      ttsAudioLinkedRef.current = true;
+    } catch (err) {
+      console.warn("[Luna] lip-sync: could not attach audio analyser:", err);
+    }
+  }, []);
+
   const playAudioBlob = useCallback((blob, nextStatus = "playing") => {
     const url = URL.createObjectURL(blob);
 
@@ -596,32 +787,61 @@ function ChatUI({ userName = "You", embedded = false }) {
       audio.src = url;
       audio.volume = voiceVolumeRef.current;
       setTtsStatus(nextStatus);
-      audio.onended = () => {
+
+      let settled = false;
+
+      const releaseRef = () => {
+        if (ttsPlaybackCompleteRef.current === finalizeSuccess) {
+          ttsPlaybackCompleteRef.current = null;
+        }
+      };
+
+      const finalizeSuccess = () => {
+        if (settled) return;
+        settled = true;
+        releaseRef();
         URL.revokeObjectURL(url);
+        audio.onended = null;
+        audio.onerror = null;
         setTtsStatus("idle");
         resolve();
       };
+
+      const finalizeError = (message) => {
+        if (settled) return;
+        settled = true;
+        releaseRef();
+        URL.revokeObjectURL(url);
+        audio.onended = null;
+        audio.onerror = null;
+        reject(new Error(message));
+      };
+
+      ttsPlaybackCompleteRef.current = finalizeSuccess;
+
+      audio.onended = finalizeSuccess;
       audio.onerror = (event) => {
         console.error("[TTS] playback:", event);
-        URL.revokeObjectURL(url);
         setTtsStatus("error");
-        reject(new Error("Playback failed"));
+        finalizeError("Playback failed");
       };
+
+      linkTtsAnalyserIfNeeded();
+      void ttsAudioCtxRef.current?.resume?.().catch(() => {});
+
       audio.play().catch((error) => {
         console.error("[TTS] play() blocked:", error.message);
-        reject(error);
+        finalizeError(error.message || "Play blocked");
       });
     });
-  }, []);
+  }, [linkTtsAnalyserIfNeeded]);
 
-  const speakElevenLabs = useCallback(async (cleanText, mood) => {
-    setTtsStatus("loading");
-
-      const response = await fetch(`${API_BASE}/tts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: cleanText, mood, language: selectedLanguageRef.current }),
-      });
+  const fetchTtsBlob = useCallback(async (cleanText, mood) => {
+    const response = await fetch(`${API_BASE}/tts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: cleanText, mood, language: selectedLanguageRef.current }),
+    });
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => response.statusText);
@@ -638,9 +858,8 @@ function ChatUI({ userName = "You", embedded = false }) {
       setSelectedVoice(voiceId);
     }
 
-    const blob = await response.blob();
-    return playAudioBlob(blob);
-  }, [playAudioBlob]);
+    return response.blob();
+  }, []);
 
   const speakWebSpeech = useCallback((cleanText) => new Promise((resolve) => {
     const synth = synthRef.current;
@@ -673,11 +892,17 @@ function ChatUI({ userName = "You", embedded = false }) {
       segmentIndex += 1;
 
       const utterance = new SpeechSynthesisUtterance(segment.content);
-    if (bestVoice) utterance.voice = bestVoice;
-    utterance.lang = bestVoice?.lang || selectedLanguageRef.current || "en-IN";
+      if (bestVoice) utterance.voice = bestVoice;
+      utterance.lang = bestVoice?.lang || selectedLanguageRef.current || "en-IN";
       utterance.rate = profile.rate;
       utterance.pitch = profile.pitch;
       utterance.volume = Math.max(0, Math.min(1, profile.volume * voiceVolumeRef.current));
+
+      utterance.onboundary = (event) => {
+        if (!event?.name || event.name === "word" || event.charIndex >= 0) {
+          webSpeechPulseRef.current = Math.min(1, webSpeechPulseRef.current + 0.32);
+        }
+      };
 
       utterance.onend = () => {
         setTimeout(speakNext, segment.pauseMs);
@@ -695,24 +920,13 @@ function ChatUI({ userName = "You", embedded = false }) {
     speakNext();
   }), []);
 
-  const speak = useCallback(async (rawText) => {
-    const clean = softenForSpeech(rawText);
-    if (!clean) return;
-
-    setIsSpeaking(true);
-    try {
-      await speakElevenLabs(clean, currentMoodRef.current);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "unknown";
-      console.error("[TTS] fallback:", message);
-      setTtsStatus("error");
-      await speakWebSpeech(clean);
-    } finally {
-      setIsSpeaking(false);
-    }
-  }, [speakElevenLabs, speakWebSpeech]);
-
   const stopSpeaking = useCallback(() => {
+    try {
+      ttsPlaybackCompleteRef.current?.();
+    } finally {
+      ttsPlaybackCompleteRef.current = null;
+    }
+
     const audio = ttsRef.current;
     if (audio) {
       audio.pause();
@@ -997,7 +1211,7 @@ function ChatUI({ userName = "You", embedded = false }) {
     audio.volume = getBgmTargetVolume(currentMoodRef.current);
   }, [bgmVolumeLevel, getBgmTargetVolume]);
 
-  const sendMessage = useCallback(async (rawInput) => {
+  const sendMessage = useCallback(async (rawInput, options = {}) => {
     const trimmed = String(rawInput || "").trim();
     if (!trimmed || isSending) return;
 
@@ -1015,7 +1229,8 @@ function ChatUI({ userName = "You", embedded = false }) {
     voiceTranscriptRef.current = "";
     stopSpeaking();
 
-    const detectedMood = detectMoodFromText(trimmed);
+    const voiceMoodHint = typeof options.voiceMoodHint === "string" ? options.voiceMoodHint : "";
+    const detectedMood = voiceMoodHint || detectMoodFromText(trimmed);
     setCurrentMood(detectedMood);
     currentMoodRef.current = detectedMood;
     setWaveLabel(MOOD_WAVE_LABELS[detectedMood]);
@@ -1032,8 +1247,10 @@ function ChatUI({ userName = "You", embedded = false }) {
     try {
       const response = await axios.post(`${API_BASE}/chat`, {
         message: trimmed,
+        user_name: userName,
         language: selectedLanguageRef.current,
         history: toHistoryPayload(nextHistory),
+        voice_mood_hint: voiceMoodHint || undefined,
       });
       const data = response.data || {};
       const lunaReply = personalizeLunaText(
@@ -1041,6 +1258,7 @@ function ChatUI({ userName = "You", embedded = false }) {
         userName,
       );
       const wisdomUsed = Array.isArray(data.wisdom_used) ? data.wisdom_used : [];
+      const explain = data.explain && typeof data.explain === "object" ? data.explain : null;
       const backendMood = data.mood;
 
       if (backendMood && MOOD_TRACKS[backendMood]) {
@@ -1051,22 +1269,74 @@ function ChatUI({ userName = "You", embedded = false }) {
         ensureBackgroundField(backendMood);
       }
 
-      setMessages((previous) => [...previous, createMessage("luna", lunaReply, { wisdomUsed })]);
+      const lunaClean = softenForSpeech(lunaReply);
+      const lunaMessage = createMessage("luna", lunaReply, { wisdomUsed, explain });
+      const ttsMoodKey = backendMood && MOOD_TRACKS[backendMood] ? backendMood : currentMoodRef.current;
+
+      let audioBlob = null;
+      setTtsStatus("loading");
+
+      try {
+        if (lunaClean) {
+          audioBlob = await fetchTtsBlob(lunaClean, ttsMoodKey);
+        }
+      } catch (ttsPrefetchErr) {
+        console.warn("[TTS] prefetch failed, will fall back:", ttsPrefetchErr);
+      }
+
+      setMessages((previous) => [...previous, lunaMessage]);
       setIsOnline(true);
-      setTimeout(() => {
-        speak(lunaReply);
-      }, 150);
+      setIsSending(false);
+
+      if (!lunaClean) {
+        setTtsStatus("idle");
+      } else {
+        setIsSpeaking(true);
+        try {
+          if (audioBlob) {
+            await playAudioBlob(audioBlob);
+          } else {
+            setTtsStatus("error");
+            await speakWebSpeech(lunaClean);
+          }
+        } catch (ttsPlayErr) {
+          console.warn("[TTS] playback failed, browser voice:", ttsPlayErr);
+          try {
+            setTtsStatus("error");
+            await speakWebSpeech(lunaClean);
+          } catch {
+            setTtsStatus("idle");
+          }
+        } finally {
+          setIsSpeaking(false);
+          setTtsStatus("idle");
+        }
+      }
     } catch (error) {
       console.error("Chat error:", error);
       setIsOnline(false);
+      const localReply = personalizeLunaText(
+        buildLocalConnectionFallback(trimmed, currentMoodRef.current),
+        userName,
+      );
       setMessages((previous) => [
         ...previous,
-        createMessage("luna", "LUNA couldn't reach her brain right now. Try again in a moment."),
+        createMessage("luna", localReply),
       ]);
     } finally {
       setIsSending(false);
     }
-  }, [ensureBackgroundField, isSending, messages, speak, stopSpeaking, switchBGM, userName]);
+  }, [
+    ensureBackgroundField,
+    fetchTtsBlob,
+    isSending,
+    messages,
+    playAudioBlob,
+    speakWebSpeech,
+    stopSpeaking,
+    switchBGM,
+    userName,
+  ]);
 
   useEffect(() => {
     sendMessageRef.current = sendMessage;
@@ -1151,7 +1421,10 @@ function ChatUI({ userName = "You", embedded = false }) {
 
         voiceTranscriptRef.current = transcript;
         setInput(transcript);
-        await sendMessageRef.current?.(transcript);
+        const inferredMood = await inferMoodFromVoiceTone(audioBlob);
+        pendingVoiceMoodHintRef.current = inferredMood;
+        await sendMessageRef.current?.(transcript, { voiceMoodHint: inferredMood || undefined });
+        pendingVoiceMoodHintRef.current = null;
       } catch (error) {
         console.error("STT upload error:", error);
         setInput("");
@@ -1161,7 +1434,7 @@ function ChatUI({ userName = "You", embedded = false }) {
 
     recorder.start(250);
     await refreshInputDevices();
-  }, [refreshInputDevices, selectedInputDeviceId, stopMicStream, transcribeRecordedAudio]);
+  }, [inferMoodFromVoiceTone, refreshInputDevices, selectedInputDeviceId, stopMicStream, transcribeRecordedAudio]);
 
   const stopAzureMicRecognition = useCallback(() => new Promise((resolve) => {
     const recognizer = azureRecognizerRef.current;
@@ -1252,7 +1525,8 @@ function ChatUI({ userName = "You", embedded = false }) {
   }, [selectedInputDeviceId]);
 
   const handleSend = async () => {
-    await sendMessage(input);
+    await sendMessage(input, { voiceMoodHint: pendingVoiceMoodHintRef.current || undefined });
+    pendingVoiceMoodHintRef.current = null;
   };
 
   const handleKeyDown = (event) => {
@@ -1277,19 +1551,39 @@ function ChatUI({ userName = "You", embedded = false }) {
       setWisdomModal(entry);
       setWhisperHistory((previous) => [entry, ...previous]);
     } catch (error) {
+      console.error("Wisdom fetch failed:", API_BASE, error);
       ignoreExpectedError("Wisdom fetch failed", error);
       setWisdomModal({
-        text: "LUNA couldn't fetch a whisper right now.",
-        source: "",
+        id: Date.now(),
+        text: [
+          "This wisdom request failed because the Luna API isn’t reachable.",
+          "",
+          "Target:",
+          `${API_BASE}/wisdom`,
+          "",
+          import.meta.env.DEV
+            ? "Dev mode uses Vite: anything under …/luna-backend is proxied to http://127.0.0.1:8000. If nothing listens on 8000, every feature (chat, voices, wisdom) fails."
+            : "Set VITE_API_BASE_URL to your deployed API URL, or serve the backend on the same host as this page.",
+          "",
+          "Start the API (pick one):",
+          "• From repo root, run: run-luna-local.cmd",
+          "• Or: cd InnerVoice_Jelly → python -m uvicorn backend:app --reload --host 127.0.0.1 --port 8000",
+          "",
+          ...(import.meta.env.DEV && typeof window !== "undefined"
+            ? [`Ping in a new tab: ${window.location.origin}/luna-backend/health → should say "ok".`]
+            : []),
+        ].join("\n"),
+        source: "Connection",
         index: 0,
-        total: 616,
+        total: 0,
+        createdAt: new Date().toISOString(),
       });
     }
   };
 
+  /** Inline TTS status near controls: only surfaced on failure (quiet path during load / play). */
   const ttsLabel = () => {
-    if (ttsStatus === "loading") return "Generating Luna voice...";
-    if (ttsStatus === "playing") return "Speaking with Luna voice";
+    if (ttsStatus === "loading" || ttsStatus === "playing") return null;
     if (ttsStatus === "error") return "Soft browser voice";
     return null;
   };
@@ -1301,110 +1595,60 @@ function ChatUI({ userName = "You", embedded = false }) {
       <div className="luna-layout">
         <div className="left-panel">
           <div className={`moon-card${isSpeaking ? " moon-card-speaking" : ""}`}>
-            <MoonScene mood={currentMood} isSpeaking={isSpeaking} activeText={activeMoonLine} />
+            <MoonScene mood={currentMood} isSpeaking={isSpeaking} lipSyncAmpRef={lipSyncAmpRef} activeText={activeMoonLine} />
           </div>
         </div>
 
         <div className="right-panel">
-          <header className="luna-header">
-            <div className="luna-title-row">
-              <div className="luna-name-block">
-                <span className="luna-name">LUNA</span>
-                <span className="status-dot-wrapper">
-                  <span className={`status-dot ${isOnline ? "status-online" : "status-offline"}`} />
-                  <span className="status-label">{isOnline ? "online" : "offline"}</span>
-                </span>
+          <div className="luna-session-shell">
+            <header className="luna-session-bar">
+              <div className="luna-session-bar-main">
+                <div className="luna-name-row">
+                  <span className="luna-name">LUNA</span>
+                  <span className="status-dot-wrapper">
+                    <span className={`status-dot ${isOnline ? "status-online" : "status-offline"}`} />
+                    <span className="status-label">{isOnline ? "online" : "offline"}</span>
+                  </span>
+                </div>
+                <p className="luna-subtitle-compact">
+                  Emotional companion · voice · wisdom · sonotherapy
+                </p>
               </div>
-              <p className="luna-subtitle">An emotional companion shaped by ancient wisdom, voice, and sonotherapy.</p>
-            </div>
 
-            <div className="brain-card" onClick={handleBGMToggle}>
-              <div className="brain-left">
-                <span className="brain-icon">Audio</span>
-                <span className="brain-title">Sonotherapy field</span>
-              </div>
-              <div className="brain-right">
-                <span className="brain-mood">Mood: <span className="brain-mood-value">{currentMood}</span></span>
-                <span className="brain-sub">{waveLabel}</span>
-                <span className="brain-sub">Language: {getLanguageLabel(selectedLanguage)}</span>
-                <span className="brain-toggle">{isAudioPlaying ? "Pause" : "Play"}</span>
-              </div>
-            </div>
+              <button
+                type="button"
+                className={`luna-session-menu-trigger${sessionMenuOpen ? " luna-session-menu-trigger--open" : ""}`}
+                aria-expanded={sessionMenuOpen}
+                aria-controls="luna-session-drawer"
+                aria-label={sessionMenuOpen ? "Close session controls" : "Open session controls"}
+                onClick={() => setSessionMenuOpen((open) => !open)}
+                title={sessionMenuOpen ? "Close session panel" : "Session controls"}
+              >
+                <span className="luna-session-menu-dots" aria-hidden="true">
+                  <span /><span /><span />
+                </span>
+              </button>
+            </header>
 
             <audio ref={bgmRef} src={MOOD_TRACKS.neutral} loop preload="auto" />
             <audio ref={ttsRef} preload="none" />
-
-            <div className="wisdom-buttons-row">
-              <button type="button" className="history-button" onClick={openVoiceStudio}>Voice studio</button>
-              <button type="button" className="wisdom-button" onClick={fetchWisdom}>Wisdom cookie</button>
-              <button type="button" className="history-button" onClick={() => setShowHistory(true)}>Whisper history</button>
-              <label className="history-button language-chip">
-                <span>Language</span>
-                <select value={selectedLanguage} onChange={(event) => setSelectedLanguage(event.target.value)} className="language-select">
-                  {LANGUAGE_OPTIONS.map((option) => (
-                    <option key={option.code} value={option.code}>{option.label}</option>
-                  ))}
-                </select>
-              </label>
-              <div className="sound-controls sound-controls-inline">
-                <label className="sound-control sound-control-inline">
-                  <span className="sound-control-label">BGM</span>
-                  <div className="sound-control-row">
-                    <input
-                      className="sound-slider"
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={Math.round(bgmVolumeLevel * 100)}
-                      onChange={(event) => setBgmVolumeLevel(Number(event.target.value) / 100)}
-                    />
-                    <span className="sound-value">{Math.round(bgmVolumeLevel * 100)}%</span>
-                  </div>
-                </label>
-                <label className="sound-control sound-control-inline">
-                  <span className="sound-control-label">Voice</span>
-                  <div className="sound-control-row">
-                    <input
-                      className="sound-slider"
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={Math.round(voiceVolumeLevel * 100)}
-                      onChange={(event) => setVoiceVolumeLevel(Number(event.target.value) / 100)}
-                    />
-                    <span className="sound-value">{Math.round(voiceVolumeLevel * 100)}%</span>
-                  </div>
-                </label>
-              </div>
-              {isSpeaking && (
-                <button
-                  type="button"
-                  className="history-button"
-                  onClick={stopSpeaking}
-                  style={{ borderColor: "rgba(255,120,120,0.7)", color: "#ffb3b3" }}
-                >
-                  Stop
-                </button>
-              )}
-              {ttsLabel() && (
-                <span style={{ fontSize: "0.72rem", color: ttsStatus === "error" ? "#ffb3b3" : "#a6adc8", alignSelf: "center" }}>
-                  {ttsLabel()}
-                </span>
-              )}
-            </div>
-            {selectedVoice && (
-              <div className="voice-selected-pill">
-                Luna voice: <span>{selectedVoice}</span>
-              </div>
-            )}
-          </header>
+          </div>
 
           <main className="chat-card">
-            <div ref={chatScrollRef} className="chat-scroll">
+            <div
+              ref={chatScrollRef}
+              className="chat-scroll"
+              onScroll={(event) => {
+                const node = event.currentTarget;
+                const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight;
+                shouldStickToBottomRef.current = distanceFromBottom < 56;
+              }}
+            >
               {messages.map((message) => (
                 <div key={message.id} className={`chat-row ${message.sender === "luna" ? "chat-row-luna" : "chat-row-sandy"}`}>
                   <div className={`chat-message-shell ${message.sender === "luna" ? "chat-message-shell-luna" : "chat-message-shell-sandy"}`}>
                   {message.sender === "luna" ? (
+                  <>
                   <button
                     type="button"
                     className={`chat-bubble bubble-luna${message.wisdomUsed?.length > 0 ? " bubble-luna-interactive" : ""}${openWisdomMessageId === message.id ? " bubble-luna-open" : ""}`}
@@ -1426,6 +1670,7 @@ function ChatUI({ userName = "You", embedded = false }) {
                       </div>
                     )}
                   </button>
+                  </>
                   ) : (
                   <div className="chat-bubble bubble-sandy">
                     <div className="bubble-header">{userName}</div>
@@ -1451,9 +1696,11 @@ function ChatUI({ userName = "You", embedded = false }) {
                 type="button"
                 className={`mic-btn${isListening ? " active" : ""}`}
                 onClick={toggleMic}
-                title={isListening ? "Tap to stop" : "Tap to speak"}
+                aria-label={isListening ? "Stop voice input" : "Start voice input"}
+                title={isListening ? "Stop voice input" : "Start voice input"}
               >
-                {isListening ? "Stop" : "Mic"}
+                <img className="mic-btn-image" src="/luna-mic.svg" alt="" aria-hidden="true" />
+                <span className="mic-btn-status" aria-hidden="true" />
               </button>
               <textarea
                 className="chat-input"
@@ -1463,11 +1710,188 @@ function ChatUI({ userName = "You", embedded = false }) {
                 onKeyDown={handleKeyDown}
                 rows={1}
               />
-              <button type="button" className="chat-send-btn" onClick={handleSend} disabled={isSending || !input.trim()}>
+              <button
+                type="button"
+                className="chat-send-btn"
+                onClick={handleSend}
+                disabled={isSending || !input.trim()}
+              >
                 {isSending ? "..." : "Send"}
               </button>
             </div>
           </main>
+
+          {sessionMenuOpen && (
+            <div className="luna-session-layer">
+              <div
+                className="luna-session-scrim"
+                aria-hidden="true"
+                onClick={() => setSessionMenuOpen(false)}
+              />
+              <aside
+                id="luna-session-drawer"
+                className="luna-session-drawer"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Session controls"
+              >
+                <div className="luna-session-drawer-head">
+                  <span className="luna-session-drawer-kicker">Session</span>
+                  <button
+                    type="button"
+                    className="luna-session-drawer-done"
+                    onClick={() => setSessionMenuOpen(false)}
+                  >
+                    Done
+                  </button>
+                </div>
+
+                <div className="luna-session-section luna-session-glass">
+                  <p className="luna-session-intro">
+                    An emotional companion shaped by ancient wisdom, voice, and sonotherapy.
+                  </p>
+                </div>
+
+                <div className="luna-session-section luna-session-glass">
+                  <div className="luna-session-section-label">Ambient</div>
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    className="brain-card brain-card--session"
+                    onClick={handleBGMToggle}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        handleBGMToggle();
+                      }
+                    }}
+                  >
+                    <div className="brain-session-top">
+                      <span className="brain-title">Sonotherapy</span>
+                      <span className="brain-toggle">{isAudioPlaying ? "Pause" : "Play"}</span>
+                    </div>
+                    <div className="brain-session-meta">
+                      <p className="brain-meta-line">
+                        <span className="brain-meta-k">Mood</span>
+                        <span className="brain-mood-value">{currentMood}</span>
+                      </p>
+                      <p className="brain-meta-line brain-meta-long">{waveLabel}</p>
+                      <p className="brain-meta-line">
+                        <span className="brain-meta-k">Language</span>
+                        <span>{getLanguageLabel(selectedLanguage)}</span>
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="luna-session-section luna-session-glass">
+                  <div className="luna-session-section-label">Tools</div>
+                  <div className="wisdom-buttons-row luna-session-actions">
+                    <button
+                      type="button"
+                      className="history-button"
+                      onClick={() => {
+                        setSessionMenuOpen(false);
+                        openVoiceStudio();
+                      }}
+                    >
+                      Voice studio
+                    </button>
+                    <button
+                      type="button"
+                      className="wisdom-button"
+                      onClick={() => {
+                        setSessionMenuOpen(false);
+                        fetchWisdom();
+                      }}
+                    >
+                      Wisdom cookie
+                    </button>
+                    <button
+                      type="button"
+                      className="history-button"
+                      onClick={() => {
+                        setSessionMenuOpen(false);
+                        setShowHistory(true);
+                      }}
+                    >
+                      Whisper history
+                    </button>
+                    <label className="history-button language-chip luna-session-language-chip">
+                      <span>Language</span>
+                      <select
+                        value={selectedLanguage}
+                        onChange={(event) => setSelectedLanguage(event.target.value)}
+                        className="language-select"
+                      >
+                        {LANGUAGE_OPTIONS.map((option) => (
+                          <option key={option.code} value={option.code}>{option.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="luna-session-section luna-session-glass">
+                  <div className="luna-session-section-label">Volume</div>
+                  <div className="sound-controls sound-controls-session">
+                    <label className="sound-control sound-control-block">
+                      <span className="sound-control-label">BGM bed</span>
+                      <div className="sound-control-row">
+                        <input
+                          className="sound-slider sound-slider-accent-cool"
+                          type="range"
+                          min="0"
+                          max="100"
+                          value={Math.round(bgmVolumeLevel * 100)}
+                          onChange={(event) => setBgmVolumeLevel(Number(event.target.value) / 100)}
+                        />
+                        <span className="sound-value">{Math.round(bgmVolumeLevel * 100)}%</span>
+                      </div>
+                    </label>
+                    <label className="sound-control sound-control-block">
+                      <span className="sound-control-label">Luna voice</span>
+                      <div className="sound-control-row">
+                        <input
+                          className="sound-slider sound-slider-accent-warm"
+                          type="range"
+                          min="0"
+                          max="100"
+                          value={Math.round(voiceVolumeLevel * 100)}
+                          onChange={(event) => setVoiceVolumeLevel(Number(event.target.value) / 100)}
+                        />
+                        <span className="sound-value">{Math.round(voiceVolumeLevel * 100)}%</span>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+
+                {(isSpeaking || ttsLabel()) && (
+                  <div className="luna-session-section luna-session-glass">
+                    <div className="luna-session-section-label">Playback</div>
+                    <div className="luna-session-playback-row">
+                      {isSpeaking && (
+                        <button type="button" className="luna-session-stop-btn" onClick={stopSpeaking}>
+                          Stop voice
+                        </button>
+                      )}
+                      {ttsLabel() && (
+                        <span className={`luna-session-tts-hint ${ttsStatus === "error" ? "luna-session-tts-hint-error" : ""}`}>
+                          {ttsLabel()}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {selectedVoice && (
+                  <div className="voice-selected-pill voice-selected-pill-session">
+                    Luna voice: <span>{selectedVoice}</span>
+                  </div>
+                )}
+              </aside>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1540,11 +1964,21 @@ function ChatUI({ userName = "You", embedded = false }) {
             </div>
 
             {voiceStudioError && <div className="voice-status voice-status-error">{voiceStudioError}</div>}
-            {!voiceStudioError && voiceStudioStatus && <div className="voice-status">{voiceStudioStatus}</div>}
+            {!voiceStudioError && voiceStudioStatus && (
+              <div className="voice-status">{voiceStudioStatus}</div>
+            )}
 
             {isLoadingVoices ? (
               <div className="history-empty-state">
                 <p>Loading Azure voices...</p>
+              </div>
+            ) : !voiceOptions.length && !voiceStudioError ? (
+              <div className="history-empty-state">
+                <p>{voiceListHint || "No voices available from the server."}</p>
+                <p className="voice-preview-note">
+                  Add <strong>AZURE_SPEECH_KEY</strong> and <strong>AZURE_SPEECH_REGION</strong> to InnerVoice Jelly
+                  (.env), restart the API, then open Voice studio again.
+                </p>
               </div>
             ) : (
               <div className="voice-grid">
@@ -1599,4 +2033,3 @@ function ChatUI({ userName = "You", embedded = false }) {
 }
 
 export default ChatUI;
-

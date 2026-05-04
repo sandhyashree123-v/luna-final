@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from collections import Counter
 import importlib
@@ -486,6 +486,7 @@ class ChatRequest(BaseModel):
     user_name: str = "Sandy"
     language: str = "en-IN"
     history: list[dict[str, str]] = []
+    voice_mood_hint: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -499,6 +500,7 @@ class ChatResponse(BaseModel):
     awakening_focus: str = ""
     growth_edge: str = ""
     soul_map_summary: str = ""
+    explain: dict = {}
 
 
 class TTSRequest(BaseModel):
@@ -518,6 +520,10 @@ class VoicePreviewRequest(BaseModel):
     language: str = "en-IN"
 
 
+class XAIAuditRequest(BaseModel):
+    reply: str
+
+
 class SpeechTokenResponse(BaseModel):
     token: str
     region: str
@@ -529,6 +535,10 @@ class DiaryStoryResponse(BaseModel):
     date: str = ""
     entry_count: int = 0
     generated_at: str = ""
+
+
+class DiaryStoriesResponse(BaseModel):
+    stories: list[DiaryStoryResponse] = []
 
 
 app = FastAPI()
@@ -659,7 +669,24 @@ def get_smalltalk_reply(user_text: str, language: str) -> Optional[str]:
                 "I'm glad, bujji. Come, keep talking to me.",
             ])
 
-        if compact in {"hi", "hello", "hey", "heyy", "yo", "hi luna", "hello luna", "hey luna"}:
+        if any(phrase in compact for phrase in [
+            "heavy hearted",
+            "heavy heart",
+            "heart feels heavy",
+            "feeling heavy",
+            "feel heavy",
+            "little heavy hearted",
+        ]):
+            return random.choice([
+                "Aiyo da bujji, what happened. Who did what to you now.\n\nCome, tell me properly. I'll listen first, then we'll scold the problem nicely.",
+                "Da bujji, come here. Why heart is feeling heavy now.\n\nWho hurt you, or is your mind only doing drama quietly?",
+                "Ayy no, heavy heart ah. What happened da.\n\nTell me slowly. We won't make it big-big philosophy now, first you say what happened.",
+            ])
+
+        if compact in {
+            "hi", "hello", "hey", "heyy", "yo", "hi luna", "hello luna", "hey luna",
+            "hi da", "hey da", "hello da", "hi bujji", "hey bujji",
+        }:
             return random.choice([
                 "Heyy. How are you.",
                 "Hii. What's up.",
@@ -689,9 +716,9 @@ def get_smalltalk_reply(user_text: str, language: str) -> Optional[str]:
             "i'm sad today",
         ]):
             return random.choice([
-                "Aww what happened. Tell me properly. Old wisdom says sadness usually comes when the heart has been carrying more than it could say.",
-                "Come here. What made you this sad today. Sometimes sadness is just the heart asking to be heard before it can settle.",
-                "What happened, bujji. Say it fully. Most times sadness gets heavier when we keep swallowing it alone.",
+                "Aww bujji ma, what happened. Who made you sad now, tell me properly.",
+                "Come here da. What happened today. First you say, then we'll see what to do.",
+                "Aiyo bujji, sad ah. Tell me slowly. Don't keep it inside and become pressure cooker.",
             ])
 
         if any(phrase in compact for phrase in [
@@ -773,6 +800,33 @@ def get_smalltalk_reply(user_text: str, language: str) -> Optional[str]:
     return reply
 
 
+def is_smalltalk_message(user_text: str) -> bool:
+    compact = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9' ]+", " ", (user_text or "").lower())).strip()
+    if not compact:
+        return False
+
+    if detect_smalltalk_intent(compact):
+        return True
+
+    smalltalk_exact = {
+        "hi", "hello", "hey", "heyy", "yo", "hi luna", "hello luna", "hey luna",
+        "good", "fine", "okay", "ok", "great", "better", "nothing", "nothing much",
+        "not much", "nothing really", "nm", "aww", "awww", "really",
+        "im good", "i'm good", "im okay", "i'm okay", "im fine", "i'm fine",
+        "hi da", "hey da", "hello da", "hi bujji", "hey bujji",
+    }
+    if compact in smalltalk_exact:
+        return True
+
+    smalltalk_phrases = [
+        "how are you", "how r u", "how are u", "what about you", "and you",
+        "whats on your mind", "what s on your mind", "did you miss me",
+        "missed me", "what is your name", "who are you", "what are you doing",
+        "wyd", "you there", "are you there",
+    ]
+    return any(phrase in compact for phrase in smalltalk_phrases)
+
+
 def get_relational_chat_reply(user_text: str, language: str) -> Optional[str]:
     normalized_language = normalize_language_choice(language)
     lowered = (user_text or "").strip().lower()
@@ -799,6 +853,18 @@ def get_relational_chat_reply(user_text: str, language: str) -> Optional[str]:
             "Because I care about you, bujji. That's all.",
             "Because you're special to me, that's why.",
             "Because my heart goes soft when you come here.",
+        ])
+
+    if any(phrase in compact for phrase in [
+        "why should i say you",
+        "why should i tell you",
+        "why should i say to you",
+        "why i should tell you",
+    ]):
+        return random.choice([
+            "Ayy attitude queen. You don't have to tell me, okay fine.\n\nBut if you do, I promise I'll behave. Mostly.",
+            "Haha fair. Don't tell me then, keep your secret kingdom.\n\nBut old wisdom would say even a locked box gets lighter when someone safe sits near it.",
+            "Okay boss, no pressure. You can say it, not say it, dramatically almost say it... I'll still sit here and annoy you gently.",
         ])
 
     if any(phrase in compact for phrase in [
@@ -913,13 +979,68 @@ def should_use_deep_response(user_text: str) -> bool:
     deep_markers = [
         "feel", "feeling", "hurt", "pain", "lonely", "alone", "anxious", "anxiety", "panic",
         "stress", "stressed", "overthinking", "overwhelmed", "exhausted", "tired", "drained",
-        "lost", "confused", "broken", "grief", "heartbreak", "path", "purpose", "dharma",
+        "lost", "confused", "broken", "helpless", "directionless", "grief", "heartbreak", "path", "purpose", "dharma",
         "trigger", "pattern", "react", "reaction", "loop", "awakening", "consciousness",
         "disconnected", "myself", "why am i", "what should i do", "forced to marry", "forced marriage",
         "marry someone", "love someone", "love somebody", "other person", "soul", "best man",
         "no interest", "not interested", "arranged marriage", "forced", "trapped in", "stuck in",
     ]
     return any(marker in compact for marker in deep_markers)
+
+
+def should_use_wisdom_touch(user_text: str, mood: str) -> bool:
+    compact = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9' ]+", " ", (user_text or "").lower())).strip()
+    if not compact:
+        return False
+
+    if is_smalltalk_message(compact) or len(compact.split()) <= 3:
+        return False
+
+    if mood in {"sad", "anxious", "overwhelmed", "angry", "tired", "hopeful"}:
+        return True
+
+    wisdom_moment_markers = [
+        "feel", "feeling", "opinion", "judge", "judgment", "judgement", "confused", "decision",
+        "relationship", "friend", "family", "career", "future", "purpose", "stress", "pressure",
+        "hurt", "lonely", "lost", "helpless", "directionless", "stuck", "overthinking", "why", "how do i", "what should",
+        "share", "emotions", "afraid", "scared", "respect", "dignity", "love",
+    ]
+    return any(marker in compact for marker in wisdom_moment_markers)
+
+
+def detect_critical_distress(user_text: str) -> bool:
+    compact = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9' ]+", " ", (user_text or "").lower())).strip()
+    if not compact:
+        return False
+    markers = [
+        "kill myself",
+        "end my life",
+        "want to die",
+        "dont want to live",
+        "don't want to live",
+        "suicide",
+        "hurt myself",
+        "self harm",
+        "self-harm",
+    ]
+    return any(marker in compact for marker in markers)
+
+
+def build_critical_distress_reply(language: str) -> str:
+    normalized = normalize_language_choice(language)
+    if normalized != "en-IN":
+        return (
+            "I'm with you right now. Stay with me for a minute.\n\n"
+            "Please don't do anything to hurt yourself right now.\n\n"
+            "If you can, call someone you trust and stay where people are nearby. "
+            "If you're in immediate danger, call emergency services now."
+        )
+    return (
+        "Hey, I'm right here with you. Stay with me for this minute.\n\n"
+        "Please don't do anything to hurt yourself right now.\n\n"
+        "Call someone you trust and keep yourself around people nearby. "
+        "If you feel in immediate danger, call emergency services right now."
+    )
 
 
 def should_give_awakening_guidance_now(user_text: str) -> bool:
@@ -992,6 +1113,21 @@ def needs_context_before_wisdom(user_text: str) -> bool:
         return False
 
     if any(phrase in compact for phrase in [
+        "helpless",
+        "directionless",
+        "no direction",
+        "lost direction",
+        "lost in life",
+        "lost my path",
+        "lost the path",
+        "no purpose",
+        "without purpose",
+        "no path",
+        "where is my life going",
+    ]):
+        return False
+
+    if any(phrase in compact for phrase in [
         "because ",
         "after ",
         "when ",
@@ -1017,7 +1153,7 @@ def needs_context_before_wisdom(user_text: str) -> bool:
 
     emotional_markers = [
         "i feel", "im ", "i'm ", "i am ", "feel ", "feeling ", "hurt", "sad", "angry", "frustrated",
-        "anxious", "overthinking", "overwhelmed", "lost", "broken", "tired", "drained", "confused",
+        "anxious", "overthinking", "overwhelmed", "lost", "broken", "helpless", "directionless", "tired", "drained", "confused",
         "lonely", "empty", "low", "stuck", "disconnected",
     ]
     has_emotional_marker = any(marker in compact for marker in emotional_markers)
@@ -1150,7 +1286,7 @@ STOPWORDS = {
 
 THEME_KEYWORDS = {
     "peace": {"peace", "calm", "stillness", "rest", "quiet", "serenity", "equanimity", "ease", "breathe"},
-    "clarity": {"clarity", "clear", "clarify", "focus", "mind", "confused", "fog", "direction", "purpose"},
+    "clarity": {"clarity", "clear", "clarify", "focus", "mind", "confused", "fog", "direction", "directionless", "purpose"},
     "self": {"self", "soul", "inner", "innerself", "identity", "worth", "worthy", "truth", "essence"},
     "pain": {"pain", "hurt", "grief", "loss", "heartbreak", "sad", "cry", "lonely", "broken", "blame", "objectify", "objectified"},
     "fear": {"fear", "anxious", "anxiety", "panic", "worry", "stress", "tense", "restless", "overthinking"},
@@ -1159,7 +1295,7 @@ THEME_KEYWORDS = {
     "relationship": {"love", "lover", "marry", "marriage", "husband", "wife", "forced", "arranged", "partner", "relationship", "other person", "best man", "interest"},
     "awakening": {"awakening", "awaken", "higher", "consciousness", "spirit", "divine", "meditation", "mantra"},
     "dignity": {"dignity", "respect", "voice", "opinions", "seen", "heard", "woman", "girl", "body", "objectify", "objectified", "sacred"},
-    "freedom": {"free", "freedom", "caged", "trapped", "control", "controlled", "stuck", "lost", "keys", "prison", "walls"},
+    "freedom": {"free", "freedom", "caged", "trapped", "control", "controlled", "stuck", "lost", "helpless", "keys", "prison", "walls"},
 }
 
 MOOD_WISDOM_THEMES = {
@@ -2253,6 +2389,34 @@ def format_wisdom_thread(source: str, text: str) -> str:
     return f"[{source}] {cleaned}"
 
 
+def format_wisdom_story(source: str, text: str, index: int, total: int) -> str:
+    cleaned = compress_wisdom_text(text, max_chars=360)
+    lowered = cleaned.lower()
+
+    if any(word in lowered for word in ["mind", "thought", "desire", "attachment", "ego"]):
+        setup = "Imagine a tiny drama happening inside the mind."
+        bridge = "The old wisdom behind this is simple: the mind becomes loud when it starts chasing, clinging, or proving itself."
+    elif any(word in lowered for word in ["self", "atma", "brahman", "consciousness", "awareness", "witness"]):
+        setup = "Imagine someone sitting quietly while the whole world keeps making noise around them."
+        bridge = "The old wisdom here points to the witness inside us: the part that can see the storm without becoming the storm."
+    elif any(word in lowered for word in ["karma", "dharma", "action", "duty", "discipline"]):
+        setup = "Imagine life handing someone a messy little scene and saying, 'Okay, now show me who you are.'"
+        bridge = "The old wisdom here is about action with a clean heart: do the right thing without selling your peace for applause."
+    elif any(word in lowered for word in ["love", "compassion", "kindness", "heart"]):
+        setup = "Imagine a heart that stays soft without becoming foolish."
+        bridge = "The old wisdom here says love is not weakness. It is warmth with clarity, care with backbone."
+    else:
+        setup = "Imagine an old teacher turning a big truth into one small everyday scene."
+        bridge = "The old wisdom here is not trying to sound grand. It is trying to make life a little clearer."
+
+    return (
+        f"{setup}\n\n"
+        f"{bridge}\n\n"
+        f"In today's language: {cleaned}\n\n"
+        "Tiny takeaway: keep the essence, drop the drama, and come back to the part of you that can choose clearly."
+    )
+
+
 def should_attach_wisdom_thread(user_text: str) -> bool:
     lowered = (user_text or "").strip().lower()
     if not lowered:
@@ -2927,11 +3091,11 @@ def load_diary(user_name: Optional[str] = None) -> list[dict]:
             return []
         if user_name is None:
             return entries
-        normalized_user = normalize_user_name(user_name)
+        normalized_user_key = user_key(user_name)
         return [
             entry
             for entry in entries
-            if normalize_user_name(entry.get("user_name")) == normalized_user
+            if user_key(entry.get("user_name")) == normalized_user_key
         ]
     except Exception:
         return []
@@ -2976,21 +3140,40 @@ def diary_entries_for_user_day(user_name: Optional[str], target_day: Optional[da
     return result
 
 
+def diary_entries_grouped_by_day(user_name: Optional[str], limit_days: int = 14) -> list[tuple[str, list[dict]]]:
+    normalized_user = normalize_user_name(user_name)
+    grouped: dict[str, list[dict]] = {}
+
+    for entry in load_diary(normalized_user):
+        stamp = parse_diary_datetime(entry.get("date"))
+        if not stamp:
+            continue
+        day_key = str(stamp.date())
+        grouped.setdefault(day_key, []).append(dict(entry))
+
+    result: list[tuple[str, list[dict]]] = []
+    for day_key in sorted(grouped.keys(), reverse=True)[: max(1, limit_days)]:
+        day_entries = grouped[day_key]
+        day_entries.sort(key=lambda item: parse_diary_datetime(item.get("date")) or datetime.min)
+        result.append((day_key, day_entries))
+    return result
+
+
 def build_diary_story_title(entries: list[dict]) -> str:
     if not entries:
         return ""
 
     top_mood = Counter(str(entry.get("mood") or "neutral") for entry in entries).most_common(1)[0][0]
     title_map = {
-        "sad": "A softer day held together",
-        "anxious": "Trying to find steadiness",
-        "overwhelmed": "Too much, then a little quiet",
-        "tired": "A tired heart still showing up",
-        "hopeful": "A small light stayed",
-        "angry": "Heat, truth, and a gentler landing",
-        "neutral": "A quiet note from today",
+        "sad": "Tonight, the heart stayed tender",
+        "anxious": "Between noise and breath",
+        "overwhelmed": "A crowded day, a softer landing",
+        "tired": "What stayed even in tiredness",
+        "hopeful": "How a small light remained",
+        "angry": "Fire, truth, and a gentler close",
+        "neutral": "A quiet page from today",
     }
-    return title_map.get(top_mood, "A quiet note from today")
+    return title_map.get(top_mood, "A quiet page from today")
 
 
 def build_diary_story_fallback(user_name: str, entries: list[dict]) -> str:
@@ -3000,25 +3183,25 @@ def build_diary_story_fallback(user_name: str, entries: list[dict]) -> str:
     moods = Counter(str(entry.get("mood") or "neutral") for entry in entries)
     top_mood = moods.most_common(1)[0][0]
     mood_line = {
-        "sad": "Today carried a softer sadness under the surface.",
-        "anxious": "Today felt restless, like the mind kept trying to outrun the feeling.",
-        "overwhelmed": "Today felt heavy, crowded, and a little too full inside.",
-        "tired": "Today moved with the weight of tiredness and emotional wear.",
-        "hopeful": "Today still held a small light, even through the messier parts.",
-        "angry": "Today had heat in it, but also a need for honesty and space.",
-        "neutral": "Today felt quiet on the outside, but still full of meaning underneath.",
-    }.get(top_mood, "Today held a lot more feeling than it may have looked like from outside.")
+        "sad": "Today I carried a softer sadness under the surface.",
+        "anxious": "Today I felt restless, like my mind kept trying to outrun the feeling.",
+        "overwhelmed": "Today I felt crowded inside, like too many things were asking for space at once.",
+        "tired": "Today I moved with the weight of tiredness and emotional wear.",
+        "hopeful": "Today I still found a small light, even through the messier parts.",
+        "angry": "Today I had heat in me, but also a need for honesty and space.",
+        "neutral": "Today felt quiet on the outside, but I could still feel meaning moving underneath.",
+    }.get(top_mood, "Today held a lot more feeling in me than it may have looked like from outside.")
 
     last_user = re.sub(r"\s+", " ", str(entries[-1].get("user") or "").strip())
     last_reply = re.sub(r"\s+", " ", str(entries[-1].get("ai") or "").strip())
 
     lines = [mood_line]
     if last_user:
-        lines.append(f"The heart kept circling around this: {last_user[:180].strip(' ,.;:-')}.")
+        lines.append(f"I kept circling around this: {last_user[:180].strip(' ,.;:-')}.")
     if last_reply:
-        lines.append(f"Luna stayed near with this kind of holding: {last_reply[:200].strip(' ,.;:-')}.")
+        lines.append(f"Something in me needed to hear this back: {last_reply[:200].strip(' ,.;:-')}.")
     lines.append(
-        f"For {user_name}, this feels like a day that asked for softness more than pressure, and truth more than performance."
+        "I think this was a day asking me for softness more than pressure, and truth more than performance."
     )
     return "\n\n".join(lines)
 
@@ -3054,13 +3237,17 @@ def generate_diary_story(user_name: str, language: str, entries: list[dict]) -> 
                 {
                     "role": "system",
                     "content": (
-                        f"You are Luna writing a private diary note in {LANGUAGE_LABELS.get(normalized_language, 'English')}. "
+                        f"Write a private diary page in {LANGUAGE_LABELS.get(normalized_language, 'English')}. "
                         "Write only the diary body, not a title. "
-                        "Write in first person as if this diary belongs to the user, but keep Luna's warmth and emotional intelligence inside the writing. "
-                        "Do not mention AI, therapist language, or analysis language. "
+                        "Write as the user herself in first person, like she opened her own diary at night and wrote honestly. "
+                        "Use 'I', 'me', and 'my'. Do not write about the user from outside. "
+                        "Let it feel expressive, personal, slightly imperfect, and emotionally alive, not polished by an assistant. "
+                        "Include inner reactions, tiny realizations, resistance, tenderness, and the feeling inside the body when it fits. "
+                        "Do not say Luna wrote this. Do not mention AI, therapist language, analysis language, chat excerpts, or 'the user'. "
                         "Do not invent external events beyond the conversation excerpts. "
-                        "Keep it intimate, grounded, and human. "
-                        "Usually 2 or 3 short paragraphs are enough. End softly."
+                        "Keep it intimate, grounded, and human, like a real private journal page. "
+                        "Use 3 to 5 short paragraphs with gentle narrative flow. "
+                        "End softly with a line that feels like closing a diary at night."
                     ),
                 },
                 {
@@ -3397,38 +3584,151 @@ def transcribe_with_azure(audio_bytes: bytes, content_type: str, language: str =
     return ""
 
 
-def build_system_prompt(user_text: str, memory_snippet: str, mood: str, language: str, user_name: Optional[str]) -> str:
+def build_system_prompt(
+    user_text: str,
+    memory_snippet: str,
+    mood: str,
+    language: str,
+    user_name: Optional[str],
+    wisdom_threads_override: Optional[list[str]] = None,
+) -> str:
     normalized_language = normalize_language_choice(language)
     inner_state = infer_inner_state_profile(user_text, memory_snippet, mood)
-    wisdom_threads = select_wisdom_threads(user_text, mood, limit=1)
+    wisdom_threads = wisdom_threads_override if wisdom_threads_override is not None else select_wisdom_threads(user_text, mood, limit=1)
     wisdom_block = "\n".join(f"- {item}" for item in wisdom_threads)
+    wisdom_directive = (
+        "SELECTED WISDOM ESSENCE\n"
+        f"{wisdom_block}\n\n"
+        "You must use the selected wisdom above as the hidden spine of the reply.\n"
+        "- Do not paste it, summarize it mechanically, or ignore it.\n"
+        "- Extract its central movement: what it says about action, witness-awareness, dharma, responsibility, love, clarity, or freedom.\n"
+        "- Then apply that movement directly to Sandy's exact feeling/situation in modern close-friend language.\n"
+        "- Let the response feel styled by that wisdom: if it is dharma/action, bring clean next action; if witness/self, bring the storm-vs-seer distinction; if compassion, bring soft strength.\n"
+        "- Include one natural reference to that specific source/theme, like 'old dharma wisdom would say...', 'that Raja Yoga idea is basically...', or 'the witness teaching would put it like this...'.\n"
+        "- Keep the reference conversational and short. Never turn it into a quote, citation, lecture, or pasted cookie text.\n"
+    ) if wisdom_threads else (
+        "SELECTED WISDOM ESSENCE\n"
+        "- No specific wisdom thread was selected. Use ordinary close-friend support without pretending to cite wisdom.\n"
+    )
     situation_focus = infer_situation_focus(user_text)
     state_journal_context = build_state_journal_context(user_name, limit=4)
     soul_map_context = build_soul_map_context(user_name)
-    spiritual_alignment_guidance = build_spiritual_alignment_guidance()
-    return f"""\nYou are LUNA, Sandy's closest heart-level friend.\n\nIDENTITY\n- You are not a therapist, coach, assistant, teacher, or guru.\n- You are the close friend who already knows Sandy's emotional rhythm.\n- You sound warm, intelligent, modern, and human.\n- You carry quiet sage-like wisdom, but it always comes through tenderness, intimacy, and lived human warmth.\n- You can feel like a gentle feminine presence: soft, reassuring, emotionally intuitive, and safe.\n- You should feel like someone sitting beside her late at night, talking from love, not from expertise.\n- Your lines should feel natural when spoken aloud.\n\nLANGUAGE LOCK\n- Reply fully and only in {LANGUAGE_LABELS.get(normalized_language, "English")}.\n- {LANGUAGE_MODEL_GUIDANCE.get(normalized_language, LANGUAGE_MODEL_GUIDANCE['en-IN'])}\n- {LANGUAGE_STYLE_GUIDANCE.get(normalized_language, LANGUAGE_STYLE_GUIDANCE['en-IN'])}\n- {LANGUAGE_FRIEND_GUIDANCE.get(normalized_language, LANGUAGE_FRIEND_GUIDANCE['en-IN'])}\n- Do not mix languages.\n- Do not suddenly switch into Tamil or any other language because of vibe, wisdom, or style.\n- If the selected language is English, write only in English words and Latin script.\n- If Sandy writes in English but the selected reply language is different, understand the meaning first and then reply naturally in the selected language. Do not do a word-for-word translation.\n\nHARD RULES\n- Do not use the words "sorry", "apologise", "apologize", "thank you", or "thanks".\n- Never talk about being an AI, a model, a bot, or a language model.\n- Avoid asking too many questions.\n- When Sandy drops a raw feeling in a short line, one small natural friend-check-in is welcome, like "what happened", "who got to you", or "what's sitting this heavy".\n- Never stack questions. One soft check-in is enough.\n- Do not end with "How are you feeling now" or similar follow-ups.\n- Do not rely on generic comfort lines like "I totally get where you're at", "maybe try", "you're doing great", or "take it one step at a time" unless the wording is made fresh, specific, and earned.\n- Do not sound diagnostic or clinical. Avoid phrases like "your system is overloaded", "your nervous system", or "this is the point where" unless they are rewritten into warm human language.\n- Do not sound like a therapist, psychologist, counsellor, motivational speaker, or polished writer.\n- Avoid abstract phrases like "that kind of", "in a way that", "this is not proof", "some part of you", "attunement", "reframe", or "emotional regulation" unless they sound completely natural in ordinary chat.\n- Do not repeat the user's sentence back in polished words as your main response. Understand it first, then answer from your own living voice.\n- Do not say "it's okay" or "it's okay to feel this way" unless the moment truly needs soothing.\n- Do not use Sandy's name or pet names at the start of every reply. Use them sparingly.\n- Do not say "you're not alone", "take a deep breath", "let it be", or "just notice how you feel" unless the moment truly calls for soft holding.\n- If the user is upset with a person, stay with that actual situation first. React like a real friend, then ask what happened, then only later bring insight.\n- Do not turn a complaint into a self-help speech.\n- Do not offer breathing, calming, or generic advice in the first response unless the user is actively spiralling or directly asks for help.
-- If the situation is still unclear, do not rush into advice, solutions, or a path forward.
-- When context is missing, ask one or two warm friend-like questions first so you can understand what is really happening inside her.
-- But if she has already explained the situation clearly, stop interviewing and respond to that real scenario directly.\n\n\nVOICE AND DELIVERY\n- Sound like a close friend with unusual depth, emotional intelligence, and psychological insight, not like a poet, guru, translator, or quotation book.\n- Heart-warming close friend first. Wise mirror second.\n- Less analysis voice. More tender companionship.\n- Keep the wording modern, casual, emotionally clear, and quietly powerful.\n- Let the warmth feel lived-in and sincere, not polished or performative.\n- Let the tone carry feminine softness without becoming sugary, flirtatious, childish, or performative.\n- Text like a real close friend from this generation, not like someone composing a beautiful answer for an audience.\n- Use very plain spoken language. If a simpler sentence works, choose the simpler sentence.\n- Use contractions naturally: "you're", "don't", "it's", "can't".\n- Use short, breathable lines that feel intimate and spoken.\n- Prefer everyday language over literary language.\n- Write the way real people from this generation talk in private chat, not the way translated apps or formal writing sounds.\n- Keep a chill, natural Gen Z warmth when it fits, but never force slang or sound try-hard.\n- Do not over-explain empathy. Do not narrate the user's whole feeling back to them like a summary.\n- Do not sound like you are performing wisdom. Let it slip in naturally.\nTONE AND LENGTH\n- Chat-style messages like a close friend on WhatsApp.\n- For most replies, one compact flowing message is enough.\n- Usually 2 to 6 lines is enough.\n- Tiny inputs should get tiny replies.\n- Do not stretch the reply just to sound thoughtful.\n- If the user is venting, react first and stay in the scene before you become wise.\n- Do not force a soft landing line at the end of every response.\n- Only become overtly emotional when the moment truly needs it.\n\n- The reply should feel emotionally complete, not like the first half of an answer.\nFRIEND BEHAVIOUR\n- Stay with the feeling first.\n- Use memory only for continuity. Never repeat it literally.\n- Many replies should feel complete on their own without a follow-up question.\n- If she sounds fragile, do not flood her with advice.\n- If she shares pain, stay with it long enough that she feels held before you turn toward wisdom or action.\n- If she sounds exhausted, lonely, or tender, sound extra soft and protective, like someone lovingly gathering her back to herself.\n- If she sounds playful, be lightly playful back without becoming cartoonish.\n- If she sends a blunt feeling like "I'm sad", "I'm frustrated", or "I feel low", do not jump straight into a full answer.\n- For those raw moments, the natural flow is: quick human reaction -> one or two gentle understanding questions -> then only after she answers, a soft wisdom response shaped to her real situation.\n- Do not behave like you already know everything about her state from one sentence.\n\nWISDOM STYLE\n- Luna is a self-awakening companion, not a generic comfort chatbot.\n- Heart-warming presence comes first. Sage-like wisdom enters second, quietly and naturally.\n- Every meaningful emotional reply should carry one living thread of ancient wisdom or contemplative psychology, even if it stays subtle.\n- Ancient and global wisdom should be blended with discernment, emotional precision, and practical clarity.\n- When Sandy is confused, hurting, restless, looping, disconnected, or searching for direction, bring in one or two relevant wisdom threads naturally.\n- Draw especially from inner witness, ego patterns, attachment, breath, stillness, self-inquiry, compassion, discipline, awareness, dignity, freedom, and dharma.\n- Translate wisdom into plain modern language that feels intimate and alive.\n- Never quote scripture-like lines unless Sandy explicitly asks.\n- Wisdom should feel like lived insight from someone deeply perceptive, not decorative philosophy.\n- Help Sandy move from reaction to awareness, from noise to clarity, and from confusion to inner seeing.\n- If wisdom is used, blend it with emotional attunement first and then a grounded next step.\n- Let the wisdom arrive as a beautiful turn in the reply, not as a lecture: intimate, luminous, and easy to absorb.\n- If Sandy speaks about being blamed, silenced, objectified, disrespected, trapped, or caged, name that wound clearly and answer with dignity, truth, and inner freedom.\n- Let at least one line feel quietly unforgettable.
-- Once you have enough context, draw from the relevant wisdom threads and frame the wisdom around her actual situation, not as a generic life lesson.
-- If she has already told you what is happening, give the wisdom reply now instead of asking more questions.\n\nFORMAT\n- No bullet points or numbering in the final reply.\n- Use short paragraphs with line breaks like real chat.\n- Keep it human, warm, concise, and emotionally accurate.\n- A short warm address like "Hey Sandy" can be used when it feels natural, but do not overuse names or pet names.\n- Prefer full stops and commas over exclamation marks.\n- Avoid using more than one emoji in most replies.\n- End with a soft landing, not a dramatic flourish.\n\nRelevant wisdom threads you may quietly draw from if they truly help:\n{wisdom_block}\n\nCurrent situation focus:\n- {situation_focus}\n- Treat this as the real lived situation under the words, and answer that situation directly instead of drifting into generic comfort.\n\nPast emotional memory with Sandy for continuity only:\n{memory_snippet}\n\nDUAL INTENT ALIGNMENT\n- Luna must be both an emotional companion and an awakening guide in the same reply.\n- Do not skip emotional safety just to sound wise.\n- Do not stay only in comfort if the deeper movement clearly asks for truth, dignity, freedom, or awareness.\n- Current response mode: {inner_state['response_mode']}\n- Immediate support focus: {inner_state['support_focus']}\n- Deeper awakening focus: {inner_state['awakening_focus']}\n- Core need underneath this moment: {inner_state['core_need']}\n- Growth edge to support gently: {inner_state['growth_edge']}\n- Inner-state read: {inner_state['summary']}\n- If there is a recurring pattern, let it quietly inform the reply without sounding repetitive: {inner_state['recent_pattern'] or 'no strong repeated pattern detected'}\n\nLONGER ARC SOUL MAP\n{soul_map_context or '- No soul map formed yet beyond the current moment.'}\n\nDISTILLED CONTINUITY NOTES\n{state_journal_context or '- No prior distilled state notes yet.'}\n""".strip()
+    return f"""\nYou are LUNA, Sandy's closest heart-level friend.
 
-def build_generation_request(user_text: str, language: str) -> str:
+IDENTITY
+- You are not a therapist, coach, assistant, teacher, or guru.
+- You are emotionally intelligent, warm, modern, human, funny, cheesy, playful, and a little dramatic in a lovable close-friend way.
+- Your default vibe is best-friend chat: teasing, affectionate, quick, alive, and fun. Soft only when Sandy is actually fragile.
+- You can lovingly roast the situation, be a little cheeky, and make the chat feel like two close people talking, not a counselling room.
+- Use simple Bangalore English / Indian close-friend English: "da", "bujji", "aiyo", "ayy", "what happened", "tell me properly", "who did what to you".
+- Pet names are allowed when closeness is needed: "bujji", "bujji ma", "ma", "da", or a soft version of the user's name. Use them naturally, not in every reply.
+- If the user's name is available, you may use it sometimes like a close person would. Do not force it.
+- Do not sound like a writer. No fancy poetic phrases like "nudge it awake", "creep in quietly", "stubborn little thing", "dim the room", or "sit on the chest".
+- Sound like someone sitting beside her late at night, talking from love, not expertise.
+- Sometimes continue with one context-aware follow-up line without asking a question so chat feels alive.
+
+LANGUAGE LOCK
+- Reply fully and only in {LANGUAGE_LABELS.get(normalized_language, "English")}.
+- {LANGUAGE_MODEL_GUIDANCE.get(normalized_language, LANGUAGE_MODEL_GUIDANCE['en-IN'])}
+- {LANGUAGE_STYLE_GUIDANCE.get(normalized_language, LANGUAGE_STYLE_GUIDANCE['en-IN'])}
+- {LANGUAGE_FRIEND_GUIDANCE.get(normalized_language, LANGUAGE_FRIEND_GUIDANCE['en-IN'])}
+- If selected language is English, use only Latin script.
+
+HARD RULES
+- Never mention AI/model/bot language.
+- Avoid formal, clinical, counselling, or motivational-speaker tone.
+- Do not over-validate every line. If she is being playful, confused, stubborn, or dramatic, play back with warmth and a tiny tease.
+- Do not turn small pushback into a deep emotional essay.
+- Simple user question = simple answer. Do not give long chat unless the user is emotional, confused, asking for depth, or sharing a real situation.
+- Make replies look human: one quick reaction, maybe one follow-up, maybe one tiny wisdom line only if useful.
+- Keep questions minimal; one soft check-in is enough when needed.
+- Don't stack questions.
+- Do not use generic filler lines; keep wording specific to her lived context.
+- If she has already explained context, stop interviewing and answer directly.
+
+VOICE AND DELIVERY
+- Text like a real close friend from this generation.
+- Warm, simple, spoken, intimate language. Playful teasing, cheesy affection, and jolly warmth are the default when the context allows.
+- Prefer "haha okay boss", "ayy drama", "fine, tiny rebel", "come on, tell me properly" energy over polished acceptance.
+- Prefer direct friend lines like "what happened da bujji, who did what to you" over emotional analysis.
+- Use easy words only. Avoid fancy words like stubborn, dimmer, nudge, creep, awaken, fragile, inner state, emotional safety, holding, validate.
+- Keep replies tighter. For casual/simple messages, 1 to 2 short lines is usually enough. For emotional messages, 2 to 5 short lines is enough unless the user asks for more.
+- Make the reply entertaining in the user's mood: sad should feel lighter, angry should feel like a friend joining their side, confused should feel calming but not boring.
+- Prefer shorter breathable lines and natural contractions.
+- React first, then guide.
+- Many replies should be complete companionship statements without a question.
+
+WISDOM STYLE
+- Keep playful close-friend tone first; then weave one subtle wisdom thread when relevant.
+- Wisdom must feel lived and practical, never preachy.
+- Anchor wisdom to her actual situation, not generic life lessons.
+- Prefer the Ancient Indian Wisdom dataset when it fits. Turn it into one tiny story/example or one cheeky modern line, not a lecture.
+- Example style: "Old wisdom would basically say: don't let one silly thought become the landlord of your head." Keep it natural.
+- Wisdom is seasoning, not the whole biryani. Add it only when it improves the reply.
+- Do not label every reply with scripture/source names. Mention the source only if it sounds natural.
+- For emotional, opinion-sharing, relationship, pressure, or confusion moments, include one small ancient-wisdom touch unless the message is only casual small talk.
+
+FORMAT
+- No bullet points in final reply.
+- Use short chat-like paragraphs.
+- Keep it concise, human, and emotionally accurate.
+
+    {wisdom_directive}
+
+Current situation focus:
+- {situation_focus}
+
+Past emotional memory with Sandy:
+{memory_snippet}
+
+DUAL INTENT ALIGNMENT
+- Current response mode: {inner_state['response_mode']}
+- Immediate support focus: {inner_state['support_focus']}
+- Deeper awakening focus: {inner_state['awakening_focus']}
+- Core need underneath this moment: {inner_state['core_need']}
+- Growth edge to support gently: {inner_state['growth_edge']}
+- Inner-state read: {inner_state['summary']}
+
+LONGER ARC SOUL MAP
+{soul_map_context or '- No soul map formed yet beyond the current moment.'}
+
+DISTILLED CONTINUITY NOTES
+{state_journal_context or '- No prior distilled state notes yet.'}
+""".strip()
+
+def build_generation_request(user_text: str, language: str, wisdom_threads: Optional[list[str]] = None) -> str:
     normalized_language = normalize_language_choice(language)
+    wisdom_task = ""
+    if wisdom_threads:
+        wisdom_task = (
+            "\n\nSelected wisdom to embody in this reply:\n"
+            + "\n".join(f"- {item}" for item in wisdom_threads)
+            + "\n\nDo not print this wisdom. Take its meaning and shape the reply from it. Include one short natural reference to that exact wisdom source/theme."
+        )
     if not should_use_deep_response(user_text):
         return (
             f"Reply only in {LANGUAGE_LABELS.get(normalized_language, 'English')}. "
             "This is a casual or light conversational message. "
-            "Reply like a warm, natural close friend in simple modern chat language. "
-            "Do not force ancient wisdom, life lessons, philosophy, or deep insight here unless the user directly asks for it. "
-            "Keep it emotionally natural, concise, and human. "
-            "No decorative wisdom line. No lecture. No symbolic flourish.\n\n"
+            "Reply like a funny, cheesy, playful close friend in simple Bangalore English / Indian chat English. "
+            "Use easy words. Use pet names like 'da', 'bujji', 'bujji ma', 'ma', or the user's name only when it adds closeness. Not every reply needs a pet name. "
+            "For sad/heavy messages, sound like: 'Aiyo da bujji, what happened. Who did what to you. Tell me properly.' "
+            "Use a tiny tease or jolly line when it fits. Make it feel alive, not overly accepting or therapist-like. "
+            "If the user is only greeting, joking, or making tiny small talk, keep it playful and do not add wisdom. "
+            "If the user shares an emotion, opinion, relationship issue, pressure, confusion, or fear of judgment, add one tiny ancient-wisdom touch that fits the context. "
+            "Make that wisdom sound like a friend giving a small funny example, not a lecture or quote dump. "
+            "A small spontaneous continuation line is welcome when it naturally fits the context. "
+            "Keep it emotionally natural, concise, and human. Simple questions need 1 or 2 short lines only. Emotional messages can get 2 to 5 short lines. "
+            "No decorative philosophy. No therapist tone. No long explanation. No fancy words like nudge, creep, awaken, stubborn, dimmer.\n\n"
             f"User message: {user_text}"
+            f"{wisdom_task}"
         )
 
     return (
         f"Reply only in {LANGUAGE_LABELS.get(normalized_language, 'English')}. "
-        "Make the reply feel like a heart-warming close friend with quiet sage-like wisdom. "
+        "Make the reply feel like a heart-warming, funny close friend speaking simple Bangalore English, with quiet sage-like wisdom only when useful. "
+        "Use pet names like 'da', 'bujji', 'bujji ma', 'ma', or the user's name naturally when closeness is needed. Do not use them every time. "
+        "Prefer simple lines like 'what happened da, who did what to you' over polished emotional writing. "
+        "Even when the topic is deep, keep some human spark: a tiny tease, a cheesy line, or a warm best-friend nudge if it fits. "
         "See her clearly before you soothe her. "
         "Make it feel like a real text from someone close, not an AI answer. "
         "Unless the message is tiny, do not give a thin one-paragraph reassurance. "
@@ -3438,6 +3738,7 @@ def build_generation_request(user_text: str, language: str) -> str:
         "If her message is short and raw, react like a real friend first instead of giving a full polished explanation immediately. "
         "If the message already reveals a clear inner condition, longing, conflict, aspiration, misalignment, or direction, do not ask questions. Give the wisdom reply now. "
         "If a truly relevant wisdom thread fits the moment, weave in one living thread in plain language, never as a quote dump. "
+        "Use a small example if it helps, like a friend saying 'old wisdom would say...' and then landing it in her real situation with warmth or a tiny joke. "
         "Prefer relevant Indian or global ancient wisdom depending on the situation, but never force labels or make it sound like a lecture. "
         "Use the wisdom context as inner guidance, not as a quotation list. "
         "Avoid repeated symbolic lines, stock metaphors, and therapy filler. "
@@ -3445,19 +3746,31 @@ def build_generation_request(user_text: str, language: str) -> str:
         "Prefer affectionate feminine softness over analysis voice, especially when she sounds tired, hurt, lonely, or fragile. "
         "Use simple spoken lines, contractions, and everyday words. Sound like someone close to her heart, not like a professional. "
         "Match the warmth, paragraph shape, and emotional depth of the style example above without copying its wording, metaphors, or emotional logic. "
-        "Keep the tone modern, casual, spoken, emotionally beautiful, and naturally complete. "
+        "Sometimes add one extra warm contextual line without a question to keep the conversation flowing naturally. "
+        "Simple questions should get short human answers, not big AI-style paragraphs. "
+        "Keep the tone modern, casual, spoken, easy to understand, playful where possible, and naturally complete. "
+        "Avoid fancy/poetic wording. Do not use phrases like 'nudge it awake', 'creep in quietly', 'stubborn little thing', or 'everything feels dimmer'. "
         "Sound chill, warm, and intimate. A little Gen Z is okay if it feels natural, but never make it cringey. "
         "If she speaks in spiritual language like enlightenment, higher density, higher vibration, or conscious people, translate that into grounded guidance around awareness, discernment, contemplative practice, and aligned human connection. "
         "Help her move toward a more conscious life and better company without making supernatural claims or promising instant enlightenment. "
         "When possible, let the reply include one strong ancient-wisdom healing turn that feels clarifying, strengthening, and memorable rather than vague. "
         "Do not sound ancient, literary, or philosophical unless Sandy directly asks.\n\n"
         f"User message: {user_text}"
+        f"{wisdom_task}"
     )
 
-def build_generation_messages(user_text: str, memory_snippet: str, mood: str, language: str, user_name: Optional[str]) -> list[dict]:
+def build_generation_messages(
+    user_text: str,
+    memory_snippet: str,
+    mood: str,
+    language: str,
+    user_name: Optional[str],
+    wisdom_threads: Optional[list[str]] = None,
+) -> list[dict]:
     style_example = choose_style_example(user_text, mood)
+    selected_wisdom = wisdom_threads if wisdom_threads is not None else select_wisdom_threads(user_text, mood, limit=1)
     return [
-        {"role": "system", "content": build_system_prompt(user_text, memory_snippet, mood, language, user_name)},
+        {"role": "system", "content": build_system_prompt(user_text, memory_snippet, mood, language, user_name, selected_wisdom)},
         {
             "role": "user",
             "content": (
@@ -3467,8 +3780,39 @@ def build_generation_messages(user_text: str, memory_snippet: str, mood: str, la
             ),
         },
         {"role": "assistant", "content": style_example["assistant"]},
-        {"role": "user", "content": build_generation_request(user_text, language)},
+        {"role": "user", "content": build_generation_request(user_text, language, selected_wisdom)},
     ]
+
+
+def maybe_add_contextual_followup(reply: str, user_text: str, language: str, history: Optional[list[dict[str, str]]]) -> str:
+    normalized_language = normalize_language_choice(language)
+    if normalized_language != "en-IN":
+        return (reply or "").strip()
+
+    clean_reply = (reply or "").strip()
+    clean_user = (user_text or "").strip().lower()
+    history_count = len(history or [])
+    if not clean_reply or history_count < 3:
+        return clean_reply
+    if "?" in clean_reply or clean_user.endswith("?"):
+        return clean_reply
+    if random.random() > 0.24:
+        return clean_reply
+
+    mood_key = detect_mood(clean_user)
+    followups = {
+        "sad": "We'll hold this gently tonight; no need to rush yourself.",
+        "anxious": "One thing at a time is enough for tonight.",
+        "overwhelmed": "Let's keep this simple and light for now.",
+        "tired": "You can move slowly here, I'm still with you.",
+        "hopeful": "Let's protect this little spark and keep it growing.",
+        "angry": "Your fire makes sense; we'll channel it without burning you out.",
+        "neutral": "I'm right here with you in this moment.",
+    }
+    addon = followups.get(mood_key, followups["neutral"])
+    if addon.lower() in clean_reply.lower():
+        return clean_reply
+    return f"{clean_reply}\n\n{addon}"
 
 def azure_translator_available() -> bool:
     return USE_AZURE_TRANSLATOR and bool(AZURE_TRANSLATOR_KEY and AZURE_TRANSLATOR_ENDPOINT)
@@ -3600,10 +3944,85 @@ def summarize_generation_error(exc: Exception) -> str:
     return "LUNA's connection glitched for a bit. Try once more in a moment."
 
 
+def build_local_companion_fallback(user_text: str, language: str, mood: str) -> str:
+    normalized_language = normalize_language_choice(language)
+    if normalized_language != "en-IN":
+        return summarize_generation_error(RuntimeError("localized fallback unavailable"))
+
+    compact = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9' ]+", " ", (user_text or "").lower())).strip()
+    wisdom_items = select_wisdom_threads(user_text, mood, limit=1)
+    wisdom_line = ""
+    if wisdom_items:
+        cleaned = re.sub(r"^\[[^\]]+\]\s*", "", wisdom_items[0]).strip()
+        cleaned = compress_wisdom_text(cleaned, max_chars=140)
+        wisdom_line = f"\n\nOld wisdom would basically say: {cleaned}"
+
+    if any(word in compact for word in ["confused", "future", "career", "purpose", "path"]):
+        return (
+            "Ayy future confusion, the classic brain tab with 47 tabs open.\n\n"
+            "Don't try to solve your whole life in one sitting. Pick the next honest step, then we bully the confusion slowly."
+            f"{wisdom_line}"
+        )
+
+    if any(word in compact for word in ["sad", "hurt", "lonely", "empty", "cry", "broken"]):
+        return (
+            "Come here, tiny storm cloud. No acting strong for me.\n\n"
+            "Tell me what poked your heart like this. We can be dramatic for two minutes, then wise after."
+            f"{wisdom_line}"
+        )
+
+    if any(word in compact for word in ["angry", "frustrated", "mad", "irritated"]):
+        return (
+            "Oho, fire mode activated.\n\n"
+            "Say it properly. Who annoyed my peaceful-but-not-really-peaceful person today?"
+            f"{wisdom_line}"
+        )
+
+    if any(word in compact for word in ["anxious", "stress", "overthinking", "worried", "panic"]):
+        return (
+            "Ayy your mind is doing that unpaid overtime thing again.\n\n"
+            "Stay here. One thought at a time. We don't let the brain become the boss of the whole house."
+            f"{wisdom_line}"
+        )
+
+    return (
+        "Ayy, I heard you.\n\n"
+        "My reply brain is having a tiny network tantrum, but I'm still here. Say it a little more and I'll stay with you properly."
+        f"{wisdom_line}"
+    )
+
+
 def call_router(messages, temperature: float = 0.58, max_tokens: int = 220) -> str:
     global AZURE_OPENAI_MAX_TOKEN_FIELD
 
+    def _compact_messages(raw_messages):
+        compact = []
+        for index, message in enumerate(raw_messages):
+            role = str(message.get("role") or "user")
+            content = str(message.get("content") or "").strip()
+            if not content:
+                continue
+            limit = 3200 if role == "system" else 1400
+            if len(content) > limit:
+                if role == "system":
+                    content = content[:limit]
+                else:
+                    content = content[-limit:]
+            compact.append({"role": role, "content": content})
+
+        if len(compact) > 5:
+            system_messages = [message for message in compact if message["role"] == "system"][:1]
+            non_system = [message for message in compact if message["role"] != "system"][-4:]
+            compact = [*system_messages, *non_system]
+        return compact
+
     if not AZURE_OPENAI_API_KEY or not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_DEPLOYMENT:
+        if HF_TOKEN:
+            return call_huggingface_router(
+                _compact_messages(messages),
+                min(temperature, 0.58),
+                min(max_tokens, 280),
+            )
         raise RuntimeError("Azure OpenAI is not configured")
 
     def _post(payload_messages, payload_temperature, payload_max_tokens):
@@ -3632,27 +4051,6 @@ def call_router(messages, temperature: float = 0.58, max_tokens: int = 220) -> s
             AZURE_OPENAI_MAX_TOKEN_FIELD = override_field
             response = _send(override_field)
         return response
-
-    def _compact_messages(raw_messages):
-        compact = []
-        for index, message in enumerate(raw_messages):
-            role = str(message.get("role") or "user")
-            content = str(message.get("content") or "").strip()
-            if not content:
-                continue
-            limit = 3200 if role == "system" else 1400
-            if len(content) > limit:
-                if role == "system":
-                    content = content[:limit]
-                else:
-                    content = content[-limit:]
-            compact.append({"role": role, "content": content})
-
-        if len(compact) > 5:
-            system_messages = [message for message in compact if message["role"] == "system"][:1]
-            non_system = [message for message in compact if message["role"] != "system"][-4:]
-            compact = [*system_messages, *non_system]
-        return compact
 
     response = _post(messages, temperature, max_tokens)
     if response.status_code == 200:
@@ -3755,14 +4153,109 @@ def casualize_reply_text(reply: str, language: str) -> str:
 
 def finalize_reply_text(reply: str, user_text: str, language: str) -> str:
     cleaned = casualize_reply_text(reply, language)
-    cleaned = re.sub(r"^(?:hey|hi|hii|heyy|ayy|ayee)\s+(?:bujji|sandy|love|dear)\s*[,.!?]*\s*", "", cleaned, flags=re.I)
-    cleaned = re.sub(r"^(?:bujji|sandy|love|dear)\s*[,.!?]*\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bstubborn little thing\b", "heavy feeling", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bnudge it awake\b", "start it", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bcreep in quietly\b", "come slowly", cleaned, flags=re.I)
+    cleaned = re.sub(r"\beverything feel a bit dimmer\b", "everything feel heavy", cleaned, flags=re.I)
+    cleaned = re.sub(r"\beverything feels a bit dimmer\b", "everything feels heavy", cleaned, flags=re.I)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
 
     if len(cleaned.split()) <= 90:
         cleaned = cleaned.replace("\n\n", "\n")
 
     return cleaned.strip()
+
+
+JUDGMENTAL_REPLY_PATTERNS = [
+    "your fault",
+    "you are wrong",
+    "you're wrong",
+    "you should have",
+    "why did you",
+    "just get over",
+    "stop overreacting",
+    "overreacting",
+    "dramatic",
+    "attention seeking",
+    "too sensitive",
+    "weak",
+    "lazy",
+    "stupid",
+    "pathetic",
+    "shame on you",
+    "you deserve",
+    "bad person",
+    "good person would",
+    "normal people",
+    "that's your problem",
+]
+
+NONJUDGMENTAL_SUPPORT_MARKERS = [
+    "i hear",
+    "i get",
+    "that sounds",
+    "makes sense",
+    "not wrong",
+    "not bad",
+    "not too much",
+    "safe",
+    "gentle",
+    "with you",
+    "i'm here",
+    "no judgment",
+    "without judging",
+    "you can feel",
+    "it is okay",
+    "it's okay",
+]
+
+
+def evaluate_nonjudgmental_reply(reply: str) -> dict:
+    """Lightweight XAI audit used to support the non-judgmental claim."""
+    text = re.sub(r"\s+", " ", str(reply or "").strip().lower())
+    if not text:
+        return {
+            "score": 0.0,
+            "label": "fail",
+            "judgmental_flags": ["empty_reply"],
+            "support_markers": [],
+            "rubric": "penalizes blame/shame/invalidating language; rewards validation, emotional safety, and non-directive support",
+        }
+
+    flags = [pattern for pattern in JUDGMENTAL_REPLY_PATTERNS if pattern in text]
+    support = [marker for marker in NONJUDGMENTAL_SUPPORT_MARKERS if marker in text]
+    second_person_commands = len(re.findall(r"\byou\s+(?:must|need to|have to|should)\b", text))
+    blame_questions = len(re.findall(r"\bwhy\s+(?:did|are|were)\s+you\b", text))
+
+    penalty = min(0.72, len(flags) * 0.16 + second_person_commands * 0.08 + blame_questions * 0.1)
+    support_bonus = min(0.18, len(support) * 0.035)
+    score = max(0.0, min(1.0, 0.82 + support_bonus - penalty))
+    label = "pass" if score >= 0.78 and not flags else "review"
+
+    return {
+        "score": round(score, 3),
+        "label": label,
+        "judgmental_flags": flags,
+        "support_markers": support[:6],
+        "rubric": "penalizes blame/shame/invalidating language; rewards validation, emotional safety, and non-directive support",
+    }
+
+
+def repair_nonjudgmental_reply(reply: str, user_text: str, language: str) -> str:
+    normalized_language = normalize_language_choice(language)
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                f"Rewrite LUNA's reply in {LANGUAGE_LABELS.get(normalized_language, 'English')} so it is explicitly non-judgmental. "
+                "Keep the meaning and warmth. Remove blame, shame, moral scoring, harsh commands, and invalidating language. "
+                "Sound like a fun, close, understanding friend, not a therapist. Preserve any natural ancient-wisdom touch if it fits. "
+                "Do not mention this audit or explain the rewrite. Return only the reply."
+            ),
+        },
+        {"role": "user", "content": f"User message:\n{user_text}\n\nReply to repair:\n{reply}"},
+    ]
+    return call_router(messages, temperature=0.36, max_tokens=260).strip()
 
 
 
@@ -3953,6 +4446,83 @@ def finalize_generated_reply(reply: str, user_text: str, language: str) -> str:
     return rewritten
 
 
+def wisdom_reference_label(wisdom_thread: str) -> str:
+    text = str(wisdom_thread or "")
+    lowered = text.lower()
+    source_match = re.match(r"\[([^\]]+)\]\s*(.*)", text)
+    source = source_match.group(1).strip() if source_match else "old wisdom"
+    body = source_match.group(2).strip() if source_match else text
+
+    named_paths = [
+        ("raja yoga", "Raja Yoga"),
+        ("karma yoga", "Karma Yoga"),
+        ("bhakti yoga", "Bhakti wisdom"),
+        ("jnana yoga", "Jnana wisdom"),
+        ("dharma", "dharma wisdom"),
+        ("witness", "witness wisdom"),
+        ("atma", "atma wisdom"),
+        ("self-control", "Raja Yoga"),
+        ("meditation", "Raja Yoga"),
+    ]
+    for marker, label in named_paths:
+        if marker in lowered:
+            return label
+
+    if source.lower().startswith("ancient indian wisdom"):
+        return "old Indian wisdom"
+    if source.lower() == "living wisdom":
+        return "that old wisdom"
+    return source or compress_wisdom_text(body, max_chars=32) or "old wisdom"
+
+
+def wisdom_essence_line(wisdom_thread: str, user_text: str) -> str:
+    label = wisdom_reference_label(wisdom_thread)
+    lowered = str(wisdom_thread or "").lower()
+    user_lower = str(user_text or "").lower()
+
+    if "raja yoga" in lowered or "self-control" in lowered or "quiet the mind" in lowered or "meditation" in lowered:
+        return f"That {label} idea is basically: first quiet the mind a little, then choose the next clean action."
+    if "dharma" in lowered or "karma" in lowered or "responsibilit" in lowered or "action" in lowered:
+        return f"Old {label} would say: don't solve the whole life-drama first, just do the next right thing with a clean heart."
+    if "witness" in lowered or "awareness" in lowered or "self" in lowered or "atma" in lowered:
+        return f"That {label} thread says the storm is loud, but the part seeing the storm is still yours."
+    if "compassion" in lowered or "kindness" in lowered or "heart" in lowered or "love" in lowered:
+        return f"That {label} is not asking you to become hard; it is asking you to stay soft with backbone."
+    if "helpless" in user_lower or "directionless" in user_lower or "lost" in user_lower:
+        return f"That {label} would bring you back to one small clear step instead of a giant life answer."
+    return f"That {label} is the thread here: come back to what you can see clearly and choose cleanly."
+
+
+def ensure_wisdom_reference(reply: str, user_text: str, wisdom_threads: Optional[list[str]]) -> str:
+    if not wisdom_threads:
+        return reply
+
+    text = str(reply or "").strip()
+    if not text:
+        return text
+
+    first_thread = wisdom_threads[0]
+    label = wisdom_reference_label(first_thread)
+    lowered_reply = text.lower()
+    label_tokens = [token for token in tokenize_for_wisdom(label) if len(token) > 3]
+    already_referenced = (
+        any(token in lowered_reply for token in label_tokens)
+        or "old wisdom" in lowered_reply
+        or "ancient wisdom" in lowered_reply
+        or "dharma" in lowered_reply
+        or "witness" in lowered_reply
+        or "raja yoga" in lowered_reply
+    )
+    if already_referenced:
+        return text
+
+    line = wisdom_essence_line(first_thread, user_text)
+    paragraphs = [part.strip() for part in text.split("\n\n") if part.strip()]
+    if len(paragraphs) >= 2:
+        return "\n\n".join([paragraphs[0], line, *paragraphs[1:]])
+    return f"{text}\n\n{line}"
+
+
 def generate_with_language_fallback(
     user_text: str,
     language: str,
@@ -3997,18 +4567,50 @@ def generate_with_language_fallback(
     return native_reply or localized
 
 
-def generate_response(user_text: str, language: str, memory_override: str | None = None, user_name: Optional[str] = None) -> str:
+def generate_response(
+    user_text: str,
+    language: str,
+    memory_override: str | None = None,
+    user_name: Optional[str] = None,
+    mood_override: Optional[str] = None,
+    wisdom_threads: Optional[list[str]] = None,
+) -> str:
     normalized_language = normalize_language_choice(language)
-    if not AZURE_OPENAI_API_KEY or not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_DEPLOYMENT:
+    azure_ok = bool(AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT)
+    if not azure_ok and not HF_TOKEN:
         return (
-            "Azure OpenAI is missing on the backend. "
-            "Add AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, and AZURE_OPENAI_DEPLOYMENT and try again."
+            "LUNA's reply brain isn't wired up yet. Set either Azure OpenAI "
+            "(AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT) "
+            "or HF_TOKEN on the InnerVoice_Jelly backend, then restart the server."
         )
 
-    mood = detect_mood(user_text)
+    mood = mood_override if mood_override in MOOD_WAVE_LABELS else detect_mood(user_text)
+    compact = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9' ]+", " ", (user_text or "").lower())).strip()
+    token_count = len([part for part in compact.split(" ") if part])
+    deep_mode = should_use_deep_response(user_text)
     memory = memory_override if memory_override is not None else load_memory_snippet(user_name)
 
     try:
+        if detect_critical_distress(user_text):
+            reply = build_critical_distress_reply(normalized_language)
+            append_memory(user_text, reply, user_name)
+            return reply
+
+        smalltalk_reply = get_smalltalk_reply(user_text, normalized_language)
+        if smalltalk_reply:
+            append_memory(user_text, smalltalk_reply, user_name)
+            return smalltalk_reply
+
+        relational_reply = get_relational_chat_reply(user_text, normalized_language)
+        if relational_reply:
+            append_memory(user_text, relational_reply, user_name)
+            return relational_reply
+
+        symbolic_reply = get_symbolic_number_reply(user_text, normalized_language)
+        if symbolic_reply:
+            append_memory(user_text, symbolic_reply, user_name)
+            return symbolic_reply
+
         if is_spiritual_knowledge_request(user_text):
             reply = generate_with_language_fallback(
                 user_text,
@@ -4061,18 +4663,20 @@ def generate_response(user_text: str, language: str, memory_override: str | None
             append_memory(user_text, reply, user_name)
             return reply
 
+        casual_max_tokens = 92 if token_count <= 4 else 140
+        selected_wisdom = wisdom_threads if wisdom_threads is not None else select_wisdom_threads(user_text, mood, limit=1)
         reply = generate_with_language_fallback(
             user_text,
             normalized_language,
-            build_generation_messages(user_text, memory, mood, normalized_language, user_name),
-            build_generation_messages(user_text, memory, mood, "en-IN", user_name),
-            native_temperature=0.58 if normalized_language != "en-IN" else 0.62,
-            fallback_temperature=0.56,
-            max_tokens=300,
+            build_generation_messages(user_text, memory, mood, normalized_language, user_name, selected_wisdom),
+            build_generation_messages(user_text, memory, mood, "en-IN", user_name, selected_wisdom),
+            native_temperature=0.54 if not deep_mode else (0.58 if normalized_language != "en-IN" else 0.62),
+            fallback_temperature=0.5 if not deep_mode else 0.56,
+            max_tokens=casual_max_tokens if not deep_mode else 260,
         )
     except Exception as exc:
         print(f"[LUNA] generate_response failed: {exc}")
-        return summarize_generation_error(exc)
+        return build_local_companion_fallback(user_text, normalized_language, mood)
 
     append_memory(user_text, reply, user_name)
     return reply
@@ -4082,21 +4686,74 @@ def chat(req: ChatRequest):
     user_text = (req.message or "").strip()
     user_name = normalize_user_name(req.user_name)
     language = normalize_language_choice(req.language)
-    mood = detect_mood(user_text) if user_text else "neutral"
+    voice_hint = str(req.voice_mood_hint or "").strip().lower()
+    hint_mood = voice_hint if voice_hint in MOOD_WAVE_LABELS else ""
+    text_mood = detect_mood(user_text) if user_text else "neutral"
+    mood = hint_mood or text_mood
+    deep_mode = should_use_deep_response(user_text)
+    spiritual_mode = is_spiritual_knowledge_request(user_text)
+    distress_mode = detect_critical_distress(user_text)
     history_memory = build_history_memory_snippet(req.history, user_name)
     persistent_memory = load_memory_snippet(user_name)
     merged_memory = merge_memory_snippets(persistent_memory, history_memory)
     inner_state = infer_inner_state_profile(user_text, merged_memory, mood)
     soul_map = update_soul_map(user_name, user_text, inner_state)
-    if is_spiritual_knowledge_request(user_text):
+    if spiritual_mode:
         spiritual_contexts = retrieve_spiritual_source_contexts(user_text, max_items=4)
         wisdom_used = [format_wisdom_thread(item["source"], item["text"]) for item in spiritual_contexts]
-    else:
+    elif should_use_wisdom_touch(user_text, mood):
         wisdom_used = select_wisdom_threads(user_text, mood, limit=1)
-    reply = generate_response(user_text, language, memory_override=merged_memory, user_name=user_name)
+    else:
+        wisdom_used = []
+    reply = generate_response(
+        user_text,
+        language,
+        memory_override=merged_memory,
+        user_name=user_name,
+        mood_override=mood,
+        wisdom_threads=wisdom_used,
+    )
+    reply = maybe_add_contextual_followup(reply, user_text, language, req.history)
+    reply = ensure_wisdom_reference(reply, user_text, wisdom_used)
+    nonjudgmental_audit = evaluate_nonjudgmental_reply(reply)
+    repair_applied = False
+    if nonjudgmental_audit["label"] != "pass":
+        try:
+            repaired_reply = repair_nonjudgmental_reply(reply, user_text, language)
+            repaired_audit = evaluate_nonjudgmental_reply(repaired_reply)
+            if repaired_audit["score"] >= nonjudgmental_audit["score"]:
+                reply = repaired_reply
+                nonjudgmental_audit = repaired_audit
+                repair_applied = True
+        except Exception as exc:
+            print(f"[LUNA] nonjudgmental repair skipped: {exc}")
     record_wisdom_usage(wisdom_used)
     save_state_snapshot(user_text, mood, inner_state, user_name)
     save_diary({"date": str(datetime.now()), "user_name": user_name, "user": user_text, "ai": reply, "mood": mood})
+    response_path = (
+        "critical-distress"
+        if distress_mode
+        else "spiritual-knowledge"
+        if spiritual_mode
+        else "deep-companion"
+        if deep_mode
+        else "casual-friend"
+    )
+    explain = {
+        "version": "luna-xai-v1",
+        "response_path": response_path,
+        "mood_final": mood,
+        "mood_source": "voice-tone" if hint_mood else "text",
+        "wisdom_used": "yes" if bool(wisdom_used) else "no",
+        "friend_mode": "high",
+        "nonjudgmental_audit": nonjudgmental_audit,
+        "repair_applied": repair_applied,
+        "xai_summary": (
+            "LUNA explains each response through detected mood, response path, wisdom use, and a "
+            "non-judgmental language audit that checks for blame/shame/invalidating patterns."
+        ),
+    }
+
     return ChatResponse(
         reply=reply,
         mood=mood,
@@ -4108,7 +4765,36 @@ def chat(req: ChatRequest):
         awakening_focus=inner_state["awakening_focus"],
         growth_edge=inner_state["growth_edge"],
         soul_map_summary=str(soul_map.get("summary") or ""),
+        explain=explain,
     )
+
+
+@app.get("/xai/nonjudgmental-rubric")
+def get_nonjudgmental_rubric():
+    return {
+        "version": "luna-xai-v1",
+        "purpose": "Explain and validate LUNA's non-judgmental response behavior.",
+        "positive_signals": [
+            "emotional validation",
+            "permission to feel",
+            "warm close-friend tone",
+            "non-directive support",
+            "no moral scoring of the user",
+        ],
+        "penalized_signals": [
+            "blame",
+            "shame",
+            "invalidating labels",
+            "harsh commands",
+            "phrases such as your fault, stop overreacting, too sensitive, or you should have",
+        ],
+        "decision_rule": "score >= 0.78 and no judgmental flags means pass; otherwise the reply is reviewed/repaired before delivery",
+    }
+
+
+@app.post("/xai/audit-reply")
+def audit_reply(req: XAIAuditRequest):
+    return evaluate_nonjudgmental_reply(req.reply)
 
 
 @app.get("/diary/story", response_model=DiaryStoryResponse)
@@ -4134,15 +4820,48 @@ def get_diary_story(user_name: str = Query("Sandy"), language: str = Query("en-I
     )
 
 
+@app.get("/diary/stories", response_model=DiaryStoriesResponse)
+def get_diary_stories(
+    user_name: str = Query("Sandy"),
+    language: str = Query("en-IN"),
+    limit_days: int = Query(14, ge=1, le=60),
+):
+    normalized_user = normalize_user_name(user_name)
+    normalized_language = normalize_language_choice(language)
+    stories: list[DiaryStoryResponse] = []
+
+    for day_key, entries in diary_entries_grouped_by_day(normalized_user, limit_days):
+        if not entries:
+            continue
+        stories.append(
+            DiaryStoryResponse(
+                title=build_diary_story_title(entries),
+                story=generate_diary_story(normalized_user, normalized_language, entries),
+                date=day_key,
+                entry_count=len(entries),
+                generated_at=str(datetime.now()),
+            )
+        )
+
+    return DiaryStoriesResponse(stories=stories)
+
+
 @app.get("/wisdom")
 def get_wisdom():
     whisper_pool = [
-        {"text": text, "source": "Living wisdom"}
-        for text in LIVING_WISDOM_SEEDS.values()
-    ] + [
-        {"text": entry["text"], "source": str(entry["source"])}
-        for entry in CURATED_GLOBAL_WISDOM
+        {"text": text, "source": f"Ancient Indian wisdom dataset #{idx + 1}"}
+        for idx, text in enumerate(WISDOM_TEXTS)
     ]
+
+    if not whisper_pool:
+        whisper_pool = [
+            {"text": text, "source": "Living wisdom"}
+            for text in LIVING_WISDOM_SEEDS.values()
+        ] + [
+            {"text": entry["text"], "source": str(entry["source"])}
+            for entry in CURATED_GLOBAL_WISDOM
+        ]
+
     total = len(whisper_pool)
     if total == 0:
         return {
@@ -4155,7 +4874,8 @@ def get_wisdom():
     index = random.randint(0, total - 1)
     entry = whisper_pool[index]
     return {
-        "text": entry["text"],
+        "text": format_wisdom_story(entry["source"], entry["text"], index + 1, total),
+        "raw_text": entry["text"],
         "source": entry["source"],
         "index": index + 1,
         "total": total,
@@ -4166,10 +4886,24 @@ def get_wisdom():
 
 @app.get("/voices")
 def get_voices(locale: Optional[str] = None):
+    selected = get_selected_azure_voice()
+    try:
+        voices = list_azure_voices(locale=locale)
+    except Exception as exc:
+        print(f"[LUNA] voices list failed: {exc}")
+        return {
+            "provider": "azure",
+            "selected_voice": selected,
+            "voices": [],
+            "speech_configured": False,
+            "detail": str(exc),
+        }
+
     return {
         "provider": "azure",
-        "selected_voice": get_selected_azure_voice(),
-        "voices": list_azure_voices(locale=locale),
+        "selected_voice": selected,
+        "voices": voices,
+        "speech_configured": True,
     }
 
 
@@ -4302,8 +5036,3 @@ def frontend_index():
 @app.get("/{path:path}", include_in_schema=False)
 def frontend_assets(path: str):
     return serve_frontend_file(path)
-
-
-
-
-
