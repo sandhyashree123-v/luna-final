@@ -35,7 +35,30 @@ ENV_FILE = Path(
         str((RUNTIME_DATA_DIR / ".env") if RUNTIME_DATA_DIR != BASE_DIR else REPO_ENV_FILE),
     )
 ).resolve()
-FRONTEND_DIST_DIR = Path(os.getenv("LUNA_STATIC_DIR", str(BASE_DIR.parent / "dist"))).resolve()
+def resolve_frontend_dist_dir() -> Path:
+    configured_dir = os.getenv("LUNA_STATIC_DIR")
+    candidates = []
+
+    if configured_dir:
+        candidates.append(Path(configured_dir))
+
+    candidates.extend(
+        [
+            BASE_DIR.parent / "dist",
+            BASE_DIR / "dist",
+            Path.cwd() / "dist",
+        ]
+    )
+
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if (resolved / "index.html").exists():
+            return resolved
+
+    return Path(configured_dir or BASE_DIR.parent / "dist").resolve()
+
+
+FRONTEND_DIST_DIR = resolve_frontend_dist_dir()
 FRONTEND_INDEX_FILE = FRONTEND_DIST_DIR / "index.html"
 
 
@@ -5007,6 +5030,7 @@ def health():
         "ok": True,
         "data_dir": str(RUNTIME_DATA_DIR),
         "frontend_ready": FRONTEND_INDEX_FILE.exists(),
+        "frontend_dir": str(FRONTEND_DIST_DIR),
         "azure_diary_enabled": azure_diary_enabled(),
     }
 
@@ -5014,7 +5038,10 @@ def health():
 def serve_frontend_file(path: str = ""):
     if not FRONTEND_INDEX_FILE.exists():
         return Response(
-            content="Frontend build not found. Run `npm run build` or set LUNA_STATIC_DIR.",
+            content=(
+                "Frontend build not found. Run `npm run build` or set "
+                f"LUNA_STATIC_DIR. Looked in: {FRONTEND_DIST_DIR}"
+            ),
             status_code=404,
             media_type="text/plain",
         )
