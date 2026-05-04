@@ -3,17 +3,33 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Instrument+Sans:wght@400;500;600;650&display=swap"
+      rel="stylesheet"
+    />
     <title>Luna QR</title>
     <style>
       :root {
-        --bg: #05030b;
-        --panel: rgba(20, 17, 30, 0.94);
-        --panel-soft: rgba(31, 26, 45, 0.82);
-        --border: rgba(202, 188, 232, 0.16);
-        --text: #eee8f1;
-        --muted: #9d99ad;
-        --accent: #b79be5;
-        --accent-light: #eadfff;
+        --font-display: "Cormorant Garamond", Georgia, "Times New Roman", serif;
+        --font-ui: "Instrument Sans", "Segoe UI Variable Text", system-ui, sans-serif;
+        --bg-main: #05040b;
+        --bg-card: rgba(18, 15, 28, 0.94);
+        --text-main: #e8eaef;
+        --text-muted: #8f93a4;
+        --border-subtle: rgba(255, 255, 255, 0.07);
+        --luna-prism: linear-gradient(
+          112deg,
+          #fdf8ff 0%,
+          #e4daf0 16%,
+          #c9b8dc 32%,
+          #a892c8 48%,
+          #8f93aa 62%,
+          #dcc8be 78%,
+          #faf6ff 100%
+        );
+        --luna-cta-prism: linear-gradient(148deg, #e8d8f4 0%, #c8b8e8 38%, #9a82c4 72%, #7a6a9c 100%);
       }
 
       * {
@@ -27,122 +43,190 @@
         place-items: center;
         padding: 28px;
         background:
-          radial-gradient(circle at 50% -10%, rgba(128, 98, 180, 0.18), transparent 38%),
-          radial-gradient(circle at 15% 20%, rgba(73, 55, 106, 0.18), transparent 26%),
-          linear-gradient(180deg, #080611 0%, #05030b 62%, #020107 100%);
-        color: var(--text);
-        font-family: Inter, "Segoe UI", system-ui, sans-serif;
+          radial-gradient(ellipse 46% 38% at 50% -8%, rgba(128, 96, 170, 0.2), transparent 62%),
+          radial-gradient(ellipse 28% 32% at 5% 26%, rgba(70, 52, 100, 0.14), transparent 66%),
+          radial-gradient(ellipse 34% 38% at 100% 30%, rgba(54, 42, 80, 0.12), transparent 68%),
+          linear-gradient(180deg, #080611 0%, var(--bg-main) 54%, #030209 100%);
+        color: var(--text-main);
+        font-family: var(--font-ui);
       }
 
-      .card {
-        width: min(100%, 430px);
-        padding: 30px;
-        border: 1px solid var(--border);
-        border-radius: 26px;
+      .poster {
+        width: min(100%, 440px);
+        padding: 28px;
+        border: 1px solid var(--border-subtle);
+        border-radius: 22px 26px 20px 18px;
         background:
-          linear-gradient(180deg, var(--panel), rgba(10, 8, 17, 0.96)),
-          radial-gradient(circle at top, rgba(183, 155, 229, 0.12), transparent 36%);
-        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.58);
+          radial-gradient(ellipse 90% 70% at 8% -10%, rgba(140, 100, 180, 0.13), transparent 45%),
+          linear-gradient(168deg, var(--bg-card), rgba(8, 7, 13, 0.96));
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.04),
+          0 22px 56px rgba(0, 0, 0, 0.45);
         text-align: center;
       }
 
       .brand {
         display: inline-flex;
         align-items: center;
-        gap: 13px;
-        margin-bottom: 20px;
+        justify-content: center;
+        gap: 18px;
+        margin: 4px 0 12px;
       }
 
-      .moon {
-        width: 44px;
-        height: 44px;
-        border: 2px solid rgba(238, 232, 241, 0.58);
-        border-radius: 50%;
+      .mark {
         position: relative;
+        width: 58px;
+        height: 58px;
       }
 
-      .moon::after {
+      .mark::before,
+      .mark::after {
         content: "";
         position: absolute;
-        top: -5px;
-        right: -10px;
-        width: 36px;
-        height: 50px;
-        border-right: 2px solid rgba(183, 155, 229, 0.5);
-        border-radius: 50%;
+        border-radius: 999px;
+      }
+
+      .mark::before {
+        inset: 12px;
+        border: 2px solid rgba(235, 228, 250, 0.52);
+        box-shadow:
+          0 0 28px rgba(150, 120, 200, 0.18),
+          0 0 56px rgba(90, 70, 130, 0.08);
+      }
+
+      .mark::after {
+        inset: 3px;
+        border-top: 2px solid rgba(200, 204, 230, 0.45);
+        border-bottom: 2px solid transparent;
+        border-left: 2px solid transparent;
+        border-right: 2px solid transparent;
+        transform: rotate(-46deg);
       }
 
       h1 {
         margin: 0;
-        font-family: Georgia, "Times New Roman", serif;
-        font-size: 56px;
+        font-family: var(--font-display);
+        font-size: 72px;
+        font-weight: 600;
         line-height: 0.95;
-        font-weight: 700;
-        color: var(--text);
+        letter-spacing: -0.02em;
+        background: var(--luna-prism);
+        background-clip: text;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        color: transparent;
       }
 
       .tagline {
-        margin: 0 0 24px;
-        color: var(--muted);
-        font-size: 16px;
-        line-height: 1.55;
+        max-width: 340px;
+        margin: 0 auto 22px;
+        color: var(--text-muted);
+        font-size: 15px;
+        font-weight: 500;
+        line-height: 1.62;
       }
 
-      .qr-box {
+      .divider {
+        width: min(300px, 72vw);
+        height: 3px;
+        margin: 0 auto 22px;
+        border: 0;
+        border-radius: 999px;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          rgba(140, 110, 180, 0.22) 24%,
+          rgba(205, 175, 150, 0.48) 48%,
+          rgba(155, 130, 200, 0.34) 60%,
+          transparent
+        );
+        box-shadow: 0 0 22px rgba(150, 120, 200, 0.2);
+      }
+
+      .qr-panel {
         padding: 16px;
-        border: 1px solid rgba(183, 155, 229, 0.28);
-        border-radius: 22px;
-        background: var(--panel-soft);
+        border: 1px solid rgba(150, 120, 188, 0.18);
+        border-radius: 22px 26px 20px 18px;
+        background:
+          radial-gradient(ellipse 70% 80% at 12% 50%, rgba(120, 88, 160, 0.1), transparent 55%),
+          rgba(9, 8, 20, 0.94);
+        box-shadow: inset 0 0 0 1px rgba(160, 130, 200, 0.05);
       }
 
-      .qr-box img {
+      .qr-panel img {
         display: block;
         width: 100%;
         height: auto;
-        border-radius: 16px;
-        background: #f8f3ff;
+        border-radius: 14px;
+        background: #f4edf8;
       }
 
       .url {
-        margin: 20px 0 0;
-        color: var(--accent-light);
-        font-size: 13px;
+        margin: 18px 0 0;
+        color: rgba(232, 234, 239, 0.66);
+        font-size: 12px;
+        font-weight: 500;
         line-height: 1.5;
         overflow-wrap: anywhere;
       }
 
       .button {
         display: inline-flex;
-        margin-top: 20px;
-        padding: 12px 18px;
-        border-radius: 14px;
-        background: linear-gradient(135deg, #eadfff, #a98bd9);
-        color: #191323;
-        font-weight: 700;
+        align-items: center;
+        justify-content: center;
+        min-height: 48px;
+        margin-top: 18px;
+        padding: 0.7rem 1.45rem;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 11px;
+        background: var(--luna-cta-prism);
+        box-shadow:
+          0 14px 36px rgba(36, 24, 58, 0.42),
+          0 0 0 1px rgba(255, 255, 255, 0.1) inset,
+          0 0 48px rgba(160, 130, 210, 0.16);
+        color: #0c080f;
+        font-size: 15px;
+        font-weight: 650;
+        letter-spacing: 0.01em;
         text-decoration: none;
+      }
+
+      @media (max-width: 460px) {
+        body {
+          padding: 18px;
+        }
+
+        .poster {
+          padding: 22px;
+        }
+
+        h1 {
+          font-size: 62px;
+        }
       }
 
       @media print {
         body {
-          background: #fff;
+          background: #05040b;
         }
 
-        .card {
+        .poster {
           box-shadow: none;
         }
       }
     </style>
   </head>
   <body>
-    <main class="card">
+    <main class="poster">
       <div class="brand">
-        <span class="moon" aria-hidden="true"></span>
+        <span class="mark" aria-hidden="true"></span>
         <h1>Luna</h1>
       </div>
 
       <p class="tagline">A calm space for thoughtful conversation, private journaling, and everyday reflection.</p>
+      <hr class="divider" />
 
-      <div class="qr-box">
+      <div class="qr-panel">
         <img src="luna-qr.png" alt="QR code for the Luna app" />
       </div>
 
